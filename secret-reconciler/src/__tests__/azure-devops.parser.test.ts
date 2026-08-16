@@ -9,7 +9,7 @@ describe("parseAzureDevOpsScmLink", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toEqual({
-        provider: "azure-devops",
+        provider: "azure",
         org: "my-org",
         project: "my-project",
         repo: "my-repo",

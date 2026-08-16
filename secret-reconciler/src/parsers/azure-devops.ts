@@ -117,7 +117,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
 
   // ── 6. Success ────────────────────────────────────────────────────────────
   const source: CanonicalSource = {
-    provider: "azure-devops",
+    provider: "azure",
     org,
     project,
     repo,

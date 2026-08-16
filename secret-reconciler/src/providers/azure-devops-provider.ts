@@ -11,12 +11,12 @@ export async function fetchAzureDevOpsFile(
   source: CanonicalSource,
   token: string
 ): Promise<string> {
+  if (!source.project) {
+    throw new Error("Missing project in Azure DevOps CanonicalSource");
+  }
+
   const encodedPath = encodeURIComponent(source.filePath);
-
-  // If project is missing (it shouldn't be for azure), fallback to repo as project.
-  const project = source.project || source.repo;
-
-  const url = `https://dev.azure.com/${encodeURIComponent(source.org)}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(source.repo)}/items?path=${encodedPath}&versionDescriptor.version=${encodeURIComponent(source.revision)}&versionDescriptor.versionType=commit&api-version=7.0`;
+  const url = `https://dev.azure.com/${encodeURIComponent(source.org)}/${encodeURIComponent(source.project)}/_apis/git/repositories/${encodeURIComponent(source.repo)}/items?path=${encodedPath}&versionDescriptor.version=${encodeURIComponent(source.revision)}&versionDescriptor.versionType=commit&api-version=7.0`;
 
   const authHeader = `Basic ${Buffer.from(`:${token}`).toString("base64")}`;
 

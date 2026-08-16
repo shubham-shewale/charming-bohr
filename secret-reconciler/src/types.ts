@@ -1,7 +1,7 @@
 /**
  * The SCM provider that hosted the source code.
  */
-export type ScmProvider = "github" | "azure-devops";
+export type ScmProvider = "github" | "azure";
 
 /**
  * The analysis strategy applied to findings.
@@ -97,10 +97,11 @@ export interface FindingRef {
  * @see CONTEXT.md — File Work Item
  */
 export interface FileWorkItem {
-  /** Unique key: provider::org/repo::revision::filePath */
+  /** Unique key: provider::org/repo::revision::filePath or provider::org/project/repo::revision::filePath */
   contentIdentity: string;
   provider: ScmProvider;
   org: string;
+  project?: string;
   repo: string;
   revision: string;
   filePath: string;

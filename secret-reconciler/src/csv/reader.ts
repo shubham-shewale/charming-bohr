@@ -13,10 +13,12 @@ import type {
 /**
  * Computes the unique Content Identity for a CanonicalSource.
  * Content Identity = provider::org/repo::revision::filePath
+ * or provider::org/project/repo::revision::filePath (for Azure DevOps)
  * @see CONTEXT.md — Content Identity
  */
 export function getContentIdentity(source: CanonicalSource): string {
-  return `${source.provider}::${source.org}/${source.repo}::${source.revision}::${source.filePath}`;
+  const repoScope = source.project ? `${source.org}/${source.project}/${source.repo}` : `${source.org}/${source.repo}`;
+  return `${source.provider}::${repoScope}::${source.revision}::${source.filePath}`;
 }
 
 /**
@@ -190,6 +192,7 @@ export function groupFindingsByContentIdentity(
         contentIdentity: key,
         provider: source.provider,
         org: source.org,
+        project: source.project,
         repo: source.repo,
         revision: source.revision,
         filePath: source.filePath,

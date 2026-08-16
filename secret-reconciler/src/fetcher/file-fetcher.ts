@@ -10,7 +10,7 @@ export interface FileFetcherOptions {
   githubPat: string;
   azureDevOpsPat?: string;
   tempDir?: string;
-  /** Optional custom provider override for testing or Azure DevOps extensibility. */
+  /** Optional custom provider override for testing. */
   fetchProvider?: (source: CanonicalSource) => Promise<string>;
 }
 
@@ -60,7 +60,7 @@ export class FileFetcher {
           content = await this.fetchProvider(source);
         } else if (source.provider === "github") {
           content = await fetchGitHubFile(source, this.githubPat);
-        } else if (source.provider === "azure-devops") {
+        } else if (source.provider === "azure") {
           if (!this.azureDevOpsPat) {
             throw new Error("Missing AZURE_DEVOPS_PAT for Azure DevOps source");
           }
