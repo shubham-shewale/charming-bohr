@@ -13,13 +13,13 @@ The flow reuses the Claude Analyzer from Ticket 3 and the TruffleHog Runner from
 
 **Blocked by:** 02 — TruffleHog flow, 03 — LLM flow
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Hybrid flow implementation: explicit state machine with LLM → conditional TruffleHog transitions
-- [ ] `false_positive` from LLM → no TruffleHog invocation, status=completed
-- [ ] `likely_secret` or `uncertain` from LLM → TruffleHog invoked, both result columns written
-- [ ] LLM failure on a finding → that finding gets `status=failed`, does not trigger TruffleHog
-- [ ] Both `llm_*` and `trufflehog_*` columns populated in output CSV
-- [ ] Integration test: mock LLM returns `false_positive` → assert TruffleHog NOT called
-- [ ] Integration test: mock LLM returns `uncertain` → assert TruffleHog IS called, both columns populated
-- [ ] Integration test: mixed findings in same file — some `false_positive`, some `uncertain` — correct routing per finding
+- [x] Hybrid flow implementation: explicit state machine with LLM → conditional TruffleHog transitions
+- [x] `false_positive` from LLM → no TruffleHog invocation, status=completed
+- [x] `likely_secret` or `uncertain` from LLM → TruffleHog invoked, both result columns written
+- [x] LLM failure on a finding → that finding gets `status=failed`, does not trigger TruffleHog
+- [x] Both `llm_*` and `trufflehog_*` columns populated in output CSV
+- [x] Integration test: mock LLM returns `false_positive` → assert TruffleHog NOT called
+- [x] Integration test: mock LLM returns `uncertain` → assert TruffleHog IS called, both columns populated
+- [x] Integration test: mixed findings in same file — some `false_positive`, some `uncertain` — correct routing per finding

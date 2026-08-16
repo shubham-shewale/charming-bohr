@@ -4,7 +4,7 @@
 export type ScmProvider = "github" | "azure";
 
 /**
- * The analysis strategy applied to findings.
+ * The analysis flow applied to findings.
  * @see CONTEXT.md — Flow
  */
 export type Flow = "trufflehog-only" | "llm-only" | "hybrid";
@@ -120,10 +120,14 @@ export interface TruffleHogDetection {
 }
 
 /**
- * Three-valued classification result of LLM analysis on a finding.
+ * Three-valued classification result of LLM analysis on a finding (or llm_invalid_output on parse failure).
  * @see CONTEXT.md — LLM Classification
  */
-export type LlmClassification = "false_positive" | "likely_secret" | "uncertain";
+export type LlmClassification =
+  | "false_positive"
+  | "likely_secret"
+  | "uncertain"
+  | "llm_invalid_output";
 
 /**
  * Final processing result for a finding row, to be written to the output CSV.
@@ -137,39 +141,6 @@ export interface FindingResult {
   llmReason?: string;
   llmConfidence?: number;
   error?: string;
-}
-
-/**
- * Builds a FindingResult for a non-pending finding row preserving rawRow values.
- */
-export function buildNonPendingFindingResult(finding: FindingRef): FindingResult {
-  const getRaw = (colName: string): string => {
-    const norm = colName.trim().toLowerCase().replace(/[\s_]+/g, "");
-    for (const key of Object.keys(finding.rawRow)) {
-      if (key.trim().toLowerCase().replace(/[\s_]+/g, "") === norm) {
-        return finding.rawRow[key] ?? "";
-      }
-    }
-    return "";
-  };
-
-  const rawConfidence = getRaw("llm_confidence");
-  const rawClassification = getRaw("llm_classification");
-  const rawError = getRaw("error");
-  const rawDetector = getRaw("trufflehog_detector");
-  const rawResult = getRaw("trufflehog_result");
-  const rawReason = getRaw("llm_reason");
-
-  return {
-    findingRef: finding,
-    status: finding.initialStatus,
-    trufflehogResult: (rawResult as TruffleHogResult) || "",
-    trufflehogDetector: rawDetector,
-    llmClassification: (rawClassification as LlmClassification) || undefined,
-    llmReason: rawReason,
-    llmConfidence: rawConfidence ? Number(rawConfidence) : undefined,
-    error: rawError || finding.parseError?.message || "",
-  };
 }
 
 

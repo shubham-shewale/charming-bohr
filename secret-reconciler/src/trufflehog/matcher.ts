@@ -4,8 +4,8 @@ import {
   type FindingResult,
   type TruffleHogDetection,
   type TruffleHogResult,
-  buildNonPendingFindingResult,
 } from "../types.js";
+import { buildNonPendingFindingResult } from "../csv/reader.js";
 
 /**
  * Matches TruffleHog detections back to finding references by line-range overlap.

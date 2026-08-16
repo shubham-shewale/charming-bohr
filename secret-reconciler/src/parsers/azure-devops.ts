@@ -1,7 +1,5 @@
-import type { CanonicalSource, ParseError, ScmParseResult } from "../types.js";
-
-// A commit SHA is exactly 40 lowercase hexadecimal characters.
-const SHA_RE = /^[0-9a-f]{40}$/i;
+import type { CanonicalSource, ScmParseResult } from "../types.js";
+import { createParseError, SHA_RE } from "./errors.js";
 
 /**
  * Parses an Azure DevOps file URL into a {@link CanonicalSource}.
@@ -16,12 +14,12 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    return err("unsupported-host", "URL is not valid.", rawUrl);
+    return createParseError("unsupported-host", "URL is not valid.", rawUrl);
   }
 
   // ── 1. Host check ──────────────────────────────────────────────────────────
   if (parsed.hostname !== "dev.azure.com") {
-    return err(
+    return createParseError(
       "unsupported-host",
       `Expected host "dev.azure.com" but got "${parsed.hostname}".`,
       rawUrl
@@ -33,7 +31,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   const segments = parsed.pathname.split("/");
   // segments: ["", org, project, "_git", repo, ...]
   if (segments.length < 5 || segments[3] !== "_git") {
-    return err(
+    return createParseError(
       "not-a-blob-url",
       `Expected path shape "/{org}/{project}/_git/{repo}" but got "${parsed.pathname}".`,
       rawUrl
@@ -45,7 +43,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   const repo = segments[4];
 
   if (!org || !project || !repo) {
-    return err(
+    return createParseError(
       "not-a-blob-url",
       `Missing org, project, or repo in path "${parsed.pathname}".`,
       rawUrl
@@ -55,7 +53,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   // ── 3. File path ───────────────────────────────────────────────────────────
   const filePathRaw = parsed.searchParams.get("path");
   if (!filePathRaw) {
-    return err(
+    return createParseError(
       "not-a-blob-url",
       `Missing "path" query parameter.`,
       rawUrl
@@ -67,7 +65,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   // ── 4. Revision (commit SHA) check ─────────────────────────────────────────
   const version = parsed.searchParams.get("version");
   if (!version || !version.startsWith("GC")) {
-    return err(
+    return createParseError(
       "missing-revision",
       `Expected a "version" query parameter starting with "GC" (Commit), but got "${version ?? "nothing"}".`,
       rawUrl
@@ -76,7 +74,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
 
   const revision = version.slice(2);
   if (!SHA_RE.test(revision)) {
-    return err(
+    return createParseError(
       "missing-revision",
       `Expected a 40-character hex commit SHA after "GC" but got "${revision}".`,
       rawUrl
@@ -86,7 +84,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   // ── 5. Line numbers ────────────────────────────────────────────────────────
   const lineStartStr = parsed.searchParams.get("line");
   if (!lineStartStr) {
-    return err(
+    return createParseError(
       "missing-line-numbers",
       `Missing "line" query parameter.`,
       rawUrl
@@ -95,7 +93,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
 
   const lineStart = parseInt(lineStartStr, 10);
   if (isNaN(lineStart)) {
-    return err(
+    return createParseError(
       "missing-line-numbers",
       `Invalid "line" query parameter: "${lineStartStr}".`,
       rawUrl
@@ -107,7 +105,7 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   if (lineEndStr) {
     lineEnd = parseInt(lineEndStr, 10);
     if (isNaN(lineEnd)) {
-      return err(
+      return createParseError(
         "missing-line-numbers",
         `Invalid "lineEnd" query parameter: "${lineEndStr}".`,
         rawUrl
@@ -128,12 +126,4 @@ export function parseAzureDevOpsScmLink(rawUrl: string): ScmParseResult {
   };
 
   return { ok: true, value: source };
-}
-
-function err(
-  kind: ParseError["kind"],
-  message: string,
-  rawUrl: string
-): { ok: false; error: ParseError } {
-  return { ok: false, error: { kind, message, rawUrl } };
 }

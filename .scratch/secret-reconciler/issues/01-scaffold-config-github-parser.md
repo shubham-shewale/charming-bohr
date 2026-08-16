@@ -10,13 +10,13 @@ Project setup: TypeScript, ESM, npm, Vitest, Node 20+.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `npm init` project with TypeScript, ESM, Vitest, Node 20+
-- [ ] CLI entry point accepts one or more CSV path arguments, `--output`, `--retry-failed`, `--keep-files`
-- [ ] `.env` loaded and Zod-validated at startup; invalid config fails with actionable error message before touching input
-- [ ] GitHub SCM link parser: extracts provider, org, repo, revision, filePath, lineStart, lineEnd from `https://github.com/{org}/{repo}/blob/{sha}/{path}#L{start}-L{end}`
-- [ ] `CanonicalSource` type defined and used as the parsed output
-- [ ] Parser returns structured error for malformed URLs (missing revision, missing line numbers, unrecognised host)
-- [ ] Unit tests for GitHub parser: valid URLs, URL-encoded paths, missing fragment, missing revision, non-GitHub URLs
-- [ ] Unit tests for config validation: valid config, missing required fields, invalid enum, negative numbers
+- [x] `npm init` project with TypeScript, ESM, Vitest, Node 20+
+- [x] CLI entry point accepts one or more CSV path arguments, `--output`, `--retry-failed`, `--keep-files`
+- [x] `.env` loaded and Zod-validated at startup; invalid config fails with actionable error message before touching input
+- [x] GitHub SCM link parser: extracts provider, org, repo, revision, filePath, lineStart, lineEnd from `https://github.com/{org}/{repo}/blob/{sha}/{path}#L{start}-L{end}`
+- [x] `CanonicalSource` type defined and used as the parsed output
+- [x] Parser returns structured error for malformed URLs (missing revision, missing line numbers, unrecognised host)
+- [x] Unit tests for GitHub parser: valid URLs, URL-encoded paths, missing fragment, missing revision, non-GitHub URLs
+- [x] Unit tests for config validation: valid config, missing required fields, invalid enum, negative numbers

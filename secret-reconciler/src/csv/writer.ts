@@ -36,6 +36,14 @@ export function writeResultsCsv(
   // Determine headers map (preserve original header names, append missing result columns)
   const finalHeaders = mergeHeaders(originalHeaders, RESULT_COLUMNS);
 
+  // Precompute column keys for result columns
+  const columnKeyMap = new Map<string, string>();
+  for (const col of RESULT_COLUMNS) {
+    const normTarget = normalizeHeader(col);
+    const existingHeader = finalHeaders.find((h) => normalizeHeader(h) === normTarget);
+    columnKeyMap.set(col, existingHeader ?? col);
+  }
+
   // Build CSV records
   const records = results.map((res) => {
     const row: Record<string, string> = { ...res.findingRef.rawRow };
@@ -43,21 +51,21 @@ export function writeResultsCsv(
     // Determine LLM classification value for CSV (including llm_invalid_output on failed LLM parses)
     let classificationStr = res.llmClassification ?? "";
     if (!classificationStr && res.status === "failed" && res.error === "llm_invalid_output") {
-      classificationStr = "llm_invalid_output" as const;
+      classificationStr = "llm_invalid_output";
     }
 
     const confidenceStr =
       res.llmConfidence !== undefined ? String(res.llmConfidence) : "";
 
     // Fill/overwrite result values
-    setColumnValue(row, finalHeaders, "source_file", res.findingRef.sourceFile);
-    setColumnValue(row, finalHeaders, "status", res.status);
-    setColumnValue(row, finalHeaders, "trufflehog_result", res.trufflehogResult ?? "");
-    setColumnValue(row, finalHeaders, "trufflehog_detector", res.trufflehogDetector ?? "");
-    setColumnValue(row, finalHeaders, "llm_classification", classificationStr);
-    setColumnValue(row, finalHeaders, "llm_reason", res.llmReason ?? "");
-    setColumnValue(row, finalHeaders, "llm_confidence", confidenceStr);
-    setColumnValue(row, finalHeaders, "error", res.error ?? "");
+    row[columnKeyMap.get("source_file")!] = res.findingRef.sourceFile;
+    row[columnKeyMap.get("status")!] = res.status;
+    row[columnKeyMap.get("trufflehog_result")!] = res.trufflehogResult ?? "";
+    row[columnKeyMap.get("trufflehog_detector")!] = res.trufflehogDetector ?? "";
+    row[columnKeyMap.get("llm_classification")!] = classificationStr;
+    row[columnKeyMap.get("llm_reason")!] = res.llmReason ?? "";
+    row[columnKeyMap.get("llm_confidence")!] = confidenceStr;
+    row[columnKeyMap.get("error")!] = res.error ?? "";
 
     return row;
   });
@@ -83,16 +91,4 @@ export function writeResultsCsv(
       }
     }
   }
-}
-
-function setColumnValue(
-  row: Record<string, string>,
-  headers: string[],
-  targetCol: string,
-  value: string
-): void {
-  const normTarget = normalizeHeader(targetCol);
-  const existingHeader = headers.find((h) => normalizeHeader(h) === normTarget);
-  const keyToUse = existingHeader ?? targetCol;
-  row[keyToUse] = value;
 }

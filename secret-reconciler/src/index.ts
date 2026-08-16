@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { loadConfig, ConfigError } from "./config.js";
-import { runPipeline, type PipelineProgress } from "./pipeline.js";
+import { runPipeline, type PipelineProgress, type PipelineSummary } from "./pipeline.js";
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -78,17 +78,21 @@ program
       }
     };
 
-    const printSummaryMetrics = (pipelineSummary: typeof summary) => {
+    const printSummaryMetrics = (pipelineSummary: PipelineSummary) => {
       console.log(`  Total:      ${pipelineSummary.totalFindings}`);
       console.log(`  Completed:  ${pipelineSummary.completed}`);
       if (pipelineSummary.pending > 0 || pipelineSummary.interrupted) {
         console.log(`  Pending:    ${pipelineSummary.pending}`);
       }
       if (!pipelineSummary.interrupted) {
-        if (config.flow !== "llm-only") {
+        if (config.flow === "trufflehog-only") {
           console.log(`  TruffleHog: Completed: ${pipelineSummary.completed} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
+        } else if (config.flow === "hybrid") {
+          const thScanned = pipelineSummary.verified + pipelineSummary.unverified + pipelineSummary.notFound;
+          console.log(`  TruffleHog: Scanned: ${thScanned} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
         }
-        if (config.flow !== "trufflehog-only") {
+
+        if (config.flow === "hybrid" || config.flow === "llm-only") {
           console.log(`  LLM Classifications: False Positives: ${pipelineSummary.falsePositive}, Likely Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
           if (pipelineSummary.tokenUsage) {
             console.log(`  Token Usage: Input: ${pipelineSummary.tokenUsage.inputTokens}, Output: ${pipelineSummary.tokenUsage.outputTokens}, Estimated Cost: $${pipelineSummary.tokenUsage.estimatedCostUsd.toFixed(6)}`);

@@ -7,8 +7,8 @@ import { CostTracker } from "./cost-tracker.js";
 import {
   type FileWorkItem,
   type FindingResult,
-  buildNonPendingFindingResult,
 } from "../types.js";
+import { buildNonPendingFindingResult } from "../csv/reader.js";
 
 export const BATCH_SIZE = 15;
 
@@ -136,11 +136,21 @@ export class ClaudeAnalyzer {
     batch: FileWorkItem["findings"],
     fileContent: string
   ): Promise<FindingResult[]> {
+    const getTitle = (rawRow: Record<string, string>, fallback: string): string => {
+      for (const [key, val] of Object.entries(rawRow)) {
+        const norm = key.trim().toLowerCase().replace(/[\s_]+/g, "");
+        if (norm === "ruleid" || norm === "checkid" || norm === "title" || norm === "findingtitle" || norm === "policyid") {
+          if (val && val.trim()) return val.trim();
+        }
+      }
+      return fallback;
+    };
+
     // Build line ranges for context builder
     const lineRanges = batch.map((f, idx) => ({
       lineStart: f.canonicalSource?.lineStart ?? 1,
       lineEnd: f.canonicalSource?.lineEnd ?? 1,
-      title: f.rawRow["Rule ID"] ?? f.rawRow["Check ID"] ?? `Finding ${idx}`,
+      title: getTitle(f.rawRow, `Finding ${idx}`),
     }));
 
     const contextResult = buildCodeContext(fileContent, lineRanges, {
@@ -150,7 +160,7 @@ export class ClaudeAnalyzer {
 
     const findingsPromptList = batch.map((f, idx) => {
       const c = f.canonicalSource;
-      const rule = f.rawRow["Rule ID"] ?? f.rawRow["Check ID"] ?? f.rawRow["Title"] ?? "Secret Finding";
+      const rule = getTitle(f.rawRow, "Secret Finding");
       return `Finding index ${idx}:
 - Title/Rule: ${rule}
 - Lines: ${c?.lineStart ?? 1} to ${c?.lineEnd ?? 1}`;
@@ -176,7 +186,11 @@ You MUST respond with ONLY a valid JSON object in the following format:
   ]
 }`;
 
-    const userPrompt = `Repository: ${workItem.org}/${workItem.repo}
+    const repoDisplay = workItem.project
+      ? `${workItem.org}/${workItem.project}/${workItem.repo}`
+      : `${workItem.org}/${workItem.repo}`;
+
+    const userPrompt = `Repository: ${repoDisplay}
 File Path: ${workItem.filePath}
 Revision: ${workItem.revision}
 

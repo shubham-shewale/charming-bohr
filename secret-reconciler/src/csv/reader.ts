@@ -6,9 +6,12 @@ import type {
   CanonicalSource,
   FileWorkItem,
   FindingRef,
+  FindingResult,
   FindingStatus,
+  LlmClassification,
   ParseError,
   ScmParseResult,
+  TruffleHogResult,
 } from "../types.js";
 
 /**
@@ -205,6 +208,39 @@ export async function readFindingsCsv(
   }
 
   return { findings, headers };
+}
+
+/**
+ * Builds a FindingResult for a non-pending finding row preserving rawRow values.
+ */
+export function buildNonPendingFindingResult(finding: FindingRef): FindingResult {
+  const getRaw = (colName: string): string => {
+    const norm = normalizeHeader(colName);
+    for (const key of Object.keys(finding.rawRow)) {
+      if (normalizeHeader(key) === norm) {
+        return finding.rawRow[key] ?? "";
+      }
+    }
+    return "";
+  };
+
+  const rawConfidence = getRaw("llm_confidence");
+  const rawClassification = getRaw("llm_classification");
+  const rawError = getRaw("error");
+  const rawDetector = getRaw("trufflehog_detector");
+  const rawResult = getRaw("trufflehog_result");
+  const rawReason = getRaw("llm_reason");
+
+  return {
+    findingRef: finding,
+    status: finding.initialStatus,
+    trufflehogResult: (rawResult as TruffleHogResult) || "",
+    trufflehogDetector: rawDetector,
+    llmClassification: (rawClassification as LlmClassification) || undefined,
+    llmReason: rawReason,
+    llmConfidence: rawConfidence ? Number(rawConfidence) : undefined,
+    error: rawError || finding.parseError?.message || "",
+  };
 }
 
 /**

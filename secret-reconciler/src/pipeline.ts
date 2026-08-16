@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import pLimit from "p-limit";
 import type { AppConfig } from "./config.js";
-import { groupFindingsByContentIdentity, readFindingsCsv, mergeHeaders } from "./csv/reader.js";
+import {
+  groupFindingsByContentIdentity,
+  readFindingsCsv,
+  mergeHeaders,
+  buildNonPendingFindingResult,
+} from "./csv/reader.js";
 import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
@@ -11,11 +16,11 @@ import {
   type CanonicalSource,
   type FindingRef,
   type FindingResult,
-  buildNonPendingFindingResult,
 } from "./types.js";
 
 import { ClaudeAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
 import { CostTracker } from "./llm/cost-tracker.js";
+import { executeHybridFlow } from "./hybrid/state-machine.js";
 
 export interface PipelineProgress {
   filesProcessed: number;
@@ -202,6 +207,11 @@ export async function runPipeline(
             workItem.findings,
             options.trufflehogExecFn
           );
+        } else if (config.flow === "hybrid") {
+          results = await executeHybridFlow(workItem, localFilePath, {
+            claudeAnalyzer,
+            trufflehogExecFn: options.trufflehogExecFn,
+          });
         } else {
           throw new Error(`Flow "${config.flow}" is not supported yet.`);
         }

@@ -1,7 +1,5 @@
-import type { CanonicalSource, ParseError, ScmParseResult } from "../types.js";
-
-// A commit SHA is exactly 40 lowercase hexadecimal characters.
-const SHA_RE = /^[0-9a-f]{40}$/i;
+import type { CanonicalSource, ScmParseResult } from "../types.js";
+import { createParseError, SHA_RE } from "./errors.js";
 
 // Matches #L{start} or #L{start}-L{end} fragments.
 // Captures: group 1 = start line, group 2 = end line (optional).
@@ -20,12 +18,12 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    return err("unsupported-host", "URL is not valid.", rawUrl);
+    return createParseError("unsupported-host", "URL is not valid.", rawUrl);
   }
 
   // ── 1. Host check ──────────────────────────────────────────────────────────
   if (parsed.hostname !== "github.com") {
-    return err(
+    return createParseError(
       "unsupported-host",
       `Expected host "github.com" but got "${parsed.hostname}".`,
       rawUrl
@@ -39,7 +37,7 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
   // segments: ["", org, repo, "blob"|"tree"|..., sha, ...path]
   const blobIndex = segments.indexOf("blob");
   if (blobIndex === -1) {
-    return err(
+    return createParseError(
       "not-a-blob-url",
       `URL path does not contain "/blob/". Found: "${parsed.pathname}".`,
       rawUrl
@@ -54,7 +52,7 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
   // which means blobIndex must be 3. Any other position means the URL
   // is malformed (e.g. missing org, missing repo, extra prefix segments).
   if (blobIndex !== 3 || !org || !repo) {
-    return err(
+    return createParseError(
       "not-a-blob-url",
       `Expected path shape "/{org}/{repo}/blob/..." but got "${parsed.pathname}".`,
       rawUrl
@@ -64,7 +62,7 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
   // ── 3. Revision (commit SHA) check ────────────────────────────────────────
   const revision = segments[blobIndex + 1];
   if (!revision || !SHA_RE.test(revision)) {
-    return err(
+    return createParseError(
       "missing-revision",
       `Expected a 40-character hex commit SHA after "/blob/" but got "${revision ?? "nothing"}". Branches are not accepted — use a full commit SHA.`,
       rawUrl
@@ -84,7 +82,7 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
     : parsed.hash;
 
   if (!fragment) {
-    return err(
+    return createParseError(
       "missing-line-numbers",
       `URL has no fragment. Expected "#L{start}" or "#L{start}-L{end}".`,
       rawUrl
@@ -93,7 +91,7 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
 
   const lineMatch = LINE_FRAGMENT_RE.exec(fragment);
   if (!lineMatch) {
-    return err(
+    return createParseError(
       "missing-line-numbers",
       `Fragment "#${fragment}" does not match "#L{start}" or "#L{start}-L{end}".`,
       rawUrl
@@ -115,16 +113,4 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
   };
 
   return { ok: true, value: source };
-}
-
-// ---------------------------------------------------------------------------
-// Internal helper
-// ---------------------------------------------------------------------------
-
-function err(
-  kind: ParseError["kind"],
-  message: string,
-  rawUrl: string
-): { ok: false; error: ParseError } {
-  return { ok: false, error: { kind, message, rawUrl } };
 }

@@ -10,12 +10,12 @@ The `SourceResolver` (or equivalent routing logic) should detect the provider fr
 
 **Blocked by:** 02 — End-to-end TruffleHog flow
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Azure DevOps SCM link parser: extracts org, project, repo, filePath (URL-decoded), revision (GC prefix stripped), lineStart, lineEnd from query params
-- [ ] Unit tests for Azure parser: valid URLs, URL-encoded paths, missing version param, missing line params, non-Azure URLs
-- [ ] Azure DevOps `SourceProvider`: fetches raw file via Items REST API at specific commit, using `AZURE_DEVOPS_PAT`
-- [ ] Source routing: provider detected from `CanonicalSource.provider` field, dispatches to correct provider
-- [ ] Mixed-provider CSV: GitHub and Azure findings in the same input → both fetched and analyzed correctly
-- [ ] Integration test: Azure DevOps findings → mocked Azure API → correct output
-- [ ] Integration test: mixed CSV (GitHub + Azure) → both providers called with correct PATs
+- [x] Azure DevOps SCM link parser: extracts org, project, repo, filePath (URL-decoded), revision (GC prefix stripped), lineStart, lineEnd from query params
+- [x] Unit tests for Azure parser: valid URLs, URL-encoded paths, missing version param, missing line params, non-Azure URLs
+- [x] Azure DevOps `SourceProvider`: fetches raw file via Items REST API at specific commit, using `AZURE_DEVOPS_PAT`
+- [x] Source routing: provider detected from `CanonicalSource.provider` field, dispatches to correct provider
+- [x] Mixed-provider CSV: GitHub and Azure findings in the same input → both fetched and analyzed correctly
+- [x] Integration test: Azure DevOps findings → mocked Azure API → correct output
+- [x] Integration test: mixed CSV (GitHub + Azure) → both providers called with correct PATs
