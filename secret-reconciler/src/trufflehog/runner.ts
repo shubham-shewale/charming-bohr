@@ -33,13 +33,17 @@ export async function runTruffleHog(
       timeout: timeoutMs,
     });
     stdout = res.stdout;
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const errorObj = err as { stdout?: string; stderr?: string; message?: string };
     // TruffleHog may return stdout along with exit code or error
-    if (err && typeof err.stdout === "string" && err.stdout.trim().length > 0) {
-      stdout = err.stdout;
+    if (errorObj && typeof errorObj.stdout === "string" && errorObj.stdout.trim().length > 0) {
+      stdout = errorObj.stdout;
     } else {
-      const errMsg = err?.message || String(err);
-      throw new Error(`TruffleHog execution failed: ${errMsg}`);
+      const stderrMsg = errorObj && typeof errorObj.stderr === "string" && errorObj.stderr.trim().length > 0
+        ? `: ${errorObj.stderr.trim()}`
+        : "";
+      const errMsg = errorObj?.message || String(err);
+      throw new Error(`TruffleHog execution failed: ${errMsg}${stderrMsg}`);
     }
   }
 

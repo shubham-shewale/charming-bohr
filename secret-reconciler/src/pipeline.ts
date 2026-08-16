@@ -87,8 +87,8 @@ export async function runPipeline(
           execFn: options.trufflehogExecFn,
         });
         return matchDetectionsToFindings(workItem.findings, detections);
-      } catch (err: any) {
-        const errMsg = err?.message || String(err);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         return produceErrorResultsForWorkItem(workItem, errMsg);
       }
     });
