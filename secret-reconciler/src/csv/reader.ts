@@ -42,7 +42,7 @@ export interface ReadCsvResult {
 /**
  * Normalizes header string for comparison.
  */
-function normalizeHeader(h: string): string {
+export function normalizeHeader(h: string): string {
   return h.trim().toLowerCase().replace(/[\s_]+/g, "");
 }
 

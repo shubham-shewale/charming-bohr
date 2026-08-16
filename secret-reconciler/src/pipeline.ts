@@ -1,7 +1,7 @@
 import path from "node:path";
 import pLimit from "p-limit";
 import type { AppConfig } from "./config.js";
-import { groupFindingsByContentIdentity, readFindingsCsv } from "./csv/reader.js";
+import { groupFindingsByContentIdentity, readFindingsCsv, normalizeHeader } from "./csv/reader.js";
 import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
@@ -100,7 +100,7 @@ export async function runPipeline(
       retryFailed: options.retryFailed,
     });
     for (const h of headers) {
-      const norm = h.trim().toLowerCase();
+      const norm = normalizeHeader(h);
       if (!seenNormHeaders.has(norm)) {
         seenNormHeaders.add(norm);
         mergedHeaders.push(h);

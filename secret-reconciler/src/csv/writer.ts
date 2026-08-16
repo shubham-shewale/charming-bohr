@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify } from "csv-stringify/sync";
 import type { FindingResult } from "../types.js";
+import { normalizeHeader } from "./reader.js";
 
 /**
  * Result column names added by secret-reconciler.
@@ -33,16 +34,21 @@ export function writeResultsCsv(
   }
 
   // Determine headers map (preserve original header names, append missing result columns)
-  const normalizedOriginals = originalHeaders.map((h) => ({
-    original: h,
-    norm: h.trim().toLowerCase(),
-  }));
+  const seenNormHeaders = new Set<string>();
+  const finalHeaders: string[] = [];
 
-  const finalHeaders: string[] = [...originalHeaders];
+  for (const h of originalHeaders) {
+    const norm = normalizeHeader(h);
+    if (!seenNormHeaders.has(norm)) {
+      seenNormHeaders.add(norm);
+      finalHeaders.push(h);
+    }
+  }
 
   for (const col of RESULT_COLUMNS) {
-    const existing = normalizedOriginals.find((h) => h.norm === col);
-    if (!existing) {
+    const normCol = normalizeHeader(col);
+    if (!seenNormHeaders.has(normCol)) {
+      seenNormHeaders.add(normCol);
       finalHeaders.push(col);
     }
   }
@@ -87,7 +93,8 @@ function setColumnValue(
   targetCol: string,
   value: string
 ): void {
-  const existingHeader = headers.find((h) => h.trim().toLowerCase() === targetCol);
+  const normTarget = normalizeHeader(targetCol);
+  const existingHeader = headers.find((h) => normalizeHeader(h) === normTarget);
   const keyToUse = existingHeader ?? targetCol;
   row[keyToUse] = value;
 }

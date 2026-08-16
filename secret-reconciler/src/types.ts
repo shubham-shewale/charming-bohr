@@ -168,7 +168,7 @@ export function buildNonPendingFindingResult(finding: FindingRef): FindingResult
     llmClassification: (rawClassification as LlmClassification) || undefined,
     llmReason: rawReason,
     llmConfidence: rawConfidence ? Number(rawConfidence) : undefined,
-    error: finding.parseError?.message || rawError || "",
+    error: rawError || finding.parseError?.message || "",
   };
 }
 
