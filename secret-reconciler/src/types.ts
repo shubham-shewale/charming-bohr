@@ -143,15 +143,32 @@ export interface FindingResult {
  * Builds a FindingResult for a non-pending finding row preserving rawRow values.
  */
 export function buildNonPendingFindingResult(finding: FindingRef): FindingResult {
+  const getRaw = (colName: string): string => {
+    const norm = colName.trim().toLowerCase().replace(/[\s_]+/g, "");
+    for (const key of Object.keys(finding.rawRow)) {
+      if (key.trim().toLowerCase().replace(/[\s_]+/g, "") === norm) {
+        return finding.rawRow[key] ?? "";
+      }
+    }
+    return "";
+  };
+
+  const rawConfidence = getRaw("llm_confidence");
+  const rawClassification = getRaw("llm_classification");
+  const rawError = getRaw("error");
+  const rawDetector = getRaw("trufflehog_detector");
+  const rawResult = getRaw("trufflehog_result");
+  const rawReason = getRaw("llm_reason");
+
   return {
     findingRef: finding,
     status: finding.initialStatus,
-    trufflehogResult: (finding.rawRow["trufflehog_result"] as TruffleHogResult) ?? "",
-    trufflehogDetector: finding.rawRow["trufflehog_detector"] ?? "",
-    llmClassification: (finding.rawRow["llm_classification"] as LlmClassification) || undefined,
-    llmReason: finding.rawRow["llm_reason"] ?? "",
-    llmConfidence: finding.rawRow["llm_confidence"] ? Number(finding.rawRow["llm_confidence"]) : undefined,
-    error: finding.parseError?.message ?? finding.rawRow["error"] ?? "",
+    trufflehogResult: (rawResult as TruffleHogResult) || "",
+    trufflehogDetector: rawDetector,
+    llmClassification: (rawClassification as LlmClassification) || undefined,
+    llmReason: rawReason,
+    llmConfidence: rawConfidence ? Number(rawConfidence) : undefined,
+    error: finding.parseError?.message || rawError || "",
   };
 }
 

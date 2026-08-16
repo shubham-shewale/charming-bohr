@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { parse } from "csv-parse";
 import { parseScmLink } from "../parsers/index.js";
 import type {
@@ -83,6 +84,13 @@ function findStatusHeader(headers: string[]): string | undefined {
 }
 
 /**
+ * Finds the header name for the source_file column if it exists.
+ */
+function findSourceFileHeader(headers: string[]): string | undefined {
+  return headers.find((h) => normalizeHeader(h) === "sourcefile");
+}
+
+/**
  * Stream-reads a CSV file, dynamically discovers headers, parses SCM links,
  * and normalizes rows into {@link FindingRef} objects.
  */
@@ -105,6 +113,7 @@ export async function readFindingsCsv(
   let headers: string[] = [];
   let scmHeader: string | undefined;
   let statusHeader: string | undefined;
+  let sourceFileHeader: string | undefined;
   let rowIndex = 0;
 
   for await (const record of parser) {
@@ -112,6 +121,7 @@ export async function readFindingsCsv(
       headers = Object.keys(record);
       scmHeader = findScmLinkHeader(headers);
       statusHeader = findStatusHeader(headers);
+      sourceFileHeader = findSourceFileHeader(headers);
     }
 
     const rawRow: Record<string, string> = record;
@@ -124,9 +134,16 @@ export async function readFindingsCsv(
         initialStatus = "completed";
       } else if (existingStatus === "failed") {
         initialStatus = options.retryFailed ? "pending" : "failed";
-      } else if (existingStatus === "skipped") {
-        initialStatus = "skipped";
+      } else {
+        // "pending", "skipped", empty status, or other values are always processed
+        initialStatus = "pending";
       }
+    }
+
+    // Determine source_file: preserve existing if present and non-empty, otherwise use filename
+    let sourceFile = path.basename(filePath);
+    if (sourceFileHeader && rawRow[sourceFileHeader] && rawRow[sourceFileHeader].trim()) {
+      sourceFile = rawRow[sourceFileHeader].trim();
     }
 
     const rawUrl = scmHeader ? rawRow[scmHeader] : undefined;
@@ -157,7 +174,7 @@ export async function readFindingsCsv(
 
     findings.push({
       rowIndex,
-      sourceFile: filePath,
+      sourceFile,
       rawRow,
       canonicalSource,
       parseError,

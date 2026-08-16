@@ -92,19 +92,22 @@ export async function runPipeline(
 
   // Read all input CSV files
   const allFindings: FindingRef[] = [];
-  const mergedHeadersSet = new Set<string>();
+  const mergedHeaders: string[] = [];
+  const seenNormHeaders = new Set<string>();
 
   for (const inputPath of inputPaths) {
     const { findings, headers } = await readFindingsCsv(inputPath, {
       retryFailed: options.retryFailed,
     });
     for (const h of headers) {
-      mergedHeadersSet.add(h);
+      const norm = h.trim().toLowerCase();
+      if (!seenNormHeaders.has(norm)) {
+        seenNormHeaders.add(norm);
+        mergedHeaders.push(h);
+      }
     }
     allFindings.push(...findings);
   }
-
-  const mergedHeaders = Array.from(mergedHeadersSet);
 
   // Group pending findings by Content Identity
   const workMap = groupFindingsByContentIdentity(allFindings);
@@ -157,14 +160,6 @@ export async function runPipeline(
       finalResults.push(buildNonPendingFindingResult(finding));
     }
   }
-
-  // Sort final results by input file and row index
-  finalResults.sort((a, b) => {
-    if (a.findingRef.sourceFile !== b.findingRef.sourceFile) {
-      return a.findingRef.sourceFile.localeCompare(b.findingRef.sourceFile);
-    }
-    return a.findingRef.rowIndex - b.findingRef.rowIndex;
-  });
 
   // Write output CSV
   writeResultsCsv(outputPath, finalResults, mergedHeaders);

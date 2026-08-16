@@ -77,6 +77,42 @@ rule-03,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e
     expect(resultRetry.findings[2]!.initialStatus).toBe("pending");
   });
 
+  it("always re-processes findings with status=skipped, status=pending, or empty status", async () => {
+    const csvPath = path.join(tmpDir, "resume_skipped.csv");
+    const content = `Rule ID,SCM Link,status
+rule-01,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file1.js#L10,skipped
+rule-02,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file2.js#L10,pending
+rule-03,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file3.js#L10,
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const result = await readFindingsCsv(csvPath);
+    expect(result.findings[0]!.initialStatus).toBe("pending");
+    expect(result.findings[1]!.initialStatus).toBe("pending");
+    expect(result.findings[2]!.initialStatus).toBe("pending");
+  });
+
+  it("tags findings with source_file as basename of input path and preserves existing source_file if present", async () => {
+    const csvPath1 = path.join(tmpDir, "unsuppressed.csv");
+    const content1 = `Rule ID,SCM Link
+rule-01,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file1.js#L10
+`;
+    fs.writeFileSync(csvPath1, content1);
+
+    const result1 = await readFindingsCsv(csvPath1);
+    expect(result1.findings[0]!.sourceFile).toBe("unsuppressed.csv");
+
+    // CSV with existing source_file header from previous run
+    const csvPath2 = path.join(tmpDir, "refeed_output.csv");
+    const content2 = `Rule ID,SCM Link,source_file,status
+rule-02,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file2.js#L10,original_suppressed.csv,completed
+`;
+    fs.writeFileSync(csvPath2, content2);
+
+    const result2 = await readFindingsCsv(csvPath2);
+    expect(result2.findings[0]!.sourceFile).toBe("original_suppressed.csv");
+  });
+
   it("groups pending findings by Content Identity", async () => {
     const csvPath = path.join(tmpDir, "input.csv");
     const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
@@ -127,5 +163,60 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
     expect(writtenContent).toContain("completed");
     expect(writtenContent).toContain("verified");
     expect(writtenContent).toContain("AWS");
+  });
+
+  it("writes output CSV with union of headers filling missing row columns with empty string", () => {
+    const outputPath = path.join(tmpDir, "union_output.csv");
+    const unionHeaders = ["Rule ID", "SCM Link", "Suppressed By", "Reason"];
+
+    const mockFinding1: FindingResult = {
+      findingRef: {
+        rowIndex: 0,
+        sourceFile: "unsuppressed.csv",
+        rawRow: {
+          "Rule ID": "rule-01",
+          "SCM Link": "https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1",
+        },
+        initialStatus: "pending",
+      },
+      status: "completed",
+      trufflehogResult: "verified",
+      trufflehogDetector: "AWS",
+      llmClassification: "likely_secret",
+      llmReason: "Found key",
+      llmConfidence: 0.95,
+      error: "",
+    };
+
+    const mockFinding2: FindingResult = {
+      findingRef: {
+        rowIndex: 0,
+        sourceFile: "suppressed.csv",
+        rawRow: {
+          "Rule ID": "rule-02",
+          "SCM Link": "https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1",
+          "Suppressed By": "alice",
+          "Reason": "test secret",
+        },
+        initialStatus: "pending",
+      },
+      status: "completed",
+      trufflehogResult: "verified",
+      trufflehogDetector: "AWS",
+      llmClassification: "likely_secret",
+      llmReason: "Found key",
+      llmConfidence: 0.95,
+      error: "",
+    };
+
+    writeResultsCsv(outputPath, [mockFinding1, mockFinding2], unionHeaders);
+
+    const writtenContent = fs.readFileSync(outputPath, "utf-8");
+    const lines = writtenContent.trim().split("\n");
+    expect(lines[0]).toBe("Rule ID,SCM Link,Suppressed By,Reason,source_file,status,trufflehog_result,trufflehog_detector,llm_classification,llm_reason,llm_confidence,error");
+    // Row 1 should have empty Suppressed By and Reason
+    expect(lines[1]).toContain("rule-01,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,,,unsuppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
+    // Row 2 should have alice and test secret
+    expect(lines[2]).toContain("rule-02,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,alice,test secret,suppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
   });
 });

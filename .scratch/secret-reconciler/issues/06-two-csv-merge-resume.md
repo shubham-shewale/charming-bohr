@@ -8,16 +8,16 @@
 
 **Blocked by:** 02 — End-to-end TruffleHog flow
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] CLI accepts two positional CSV arguments
-- [ ] Both CSVs streamed; each row tagged with `source_file` = input filename
-- [ ] Header union: output columns = union of both inputs' columns + result columns; missing columns filled with empty
-- [ ] Output CSV has `source_file` column correctly populated
-- [ ] Resume detection: `status` column present in input → auto-skip `completed` rows
-- [ ] Skipped rows written directly to output with existing result columns preserved verbatim
-- [ ] `--retry-failed` flag: `failed` rows reprocessed when flag is present, skipped otherwise
-- [ ] Rows with `pending`, `skipped`, or empty status are always processed
-- [ ] Integration test: two CSVs with different columns merged into one output
-- [ ] Integration test: re-feed output → completed rows skipped, pending rows processed
-- [ ] Integration test: `--retry-failed` → failed rows reprocessed, completed still skipped
+- [x] CLI accepts two positional CSV arguments
+- [x] Both CSVs streamed; each row tagged with `source_file` = input filename
+- [x] Header union: output columns = union of both inputs' columns + result columns; missing columns filled with empty
+- [x] Output CSV has `source_file` column correctly populated
+- [x] Resume detection: `status` column present in input → auto-skip `completed` rows
+- [x] Skipped rows written directly to output with existing result columns preserved verbatim
+- [x] `--retry-failed` flag: `failed` rows reprocessed when flag is present, skipped otherwise
+- [x] Rows with `pending`, `skipped`, or empty status are always processed
+- [x] Integration test: two CSVs with different columns merged into one output
+- [x] Integration test: re-feed output → completed rows skipped, pending rows processed
+- [x] Integration test: `--retry-failed` → failed rows reprocessed, completed still skipped
