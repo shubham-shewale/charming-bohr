@@ -249,7 +249,7 @@ export async function runPipeline(
       executionPromise,
       abortTriggeredPromise.then(async () => {
         isAborted = true;
-        // Wait up to timeoutMs for in-flight tasks to finish
+        // Wait up to timeoutMs for in-flight work items to finish
         await Promise.race([
           executionPromise,
           new Promise((r) => setTimeout(r, timeoutMs)),

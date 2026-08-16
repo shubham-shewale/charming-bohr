@@ -61,6 +61,13 @@ program
     let lastProgressLen = 0;
     const isInteractive = Boolean(process.stdout.isTTY);
 
+    const clearProgressLine = () => {
+      if (isInteractive && lastProgressLen > 0) {
+        process.stdout.write("\n");
+        lastProgressLen = 0;
+      }
+    };
+
     const onProgress = (progress: PipelineProgress) => {
       const line = `[Progress] Files: ${progress.filesProcessed}/${progress.totalFiles} | Findings: ${progress.findingsCompleted}/${progress.totalFindings} | Tokens: ${progress.tokensUsed} | Cost: $${progress.estimatedCostUsd.toFixed(4)}`;
       if (isInteractive) {
@@ -82,9 +89,7 @@ program
         onProgress,
       });
 
-      if (isInteractive && lastProgressLen > 0) {
-        process.stdout.write("\n");
-      }
+      clearProgressLine();
 
       if (summary.interrupted) {
         console.log(`\n⚠ Run interrupted by signal. Completed findings saved to: ${summary.outputPath}`);
@@ -117,9 +122,7 @@ program
         console.log(`  Temp files kept at: ${summary.tempDirKept}`);
       }
     } catch (err: unknown) {
-      if (isInteractive && lastProgressLen > 0) {
-        process.stdout.write("\n");
-      }
+      clearProgressLine();
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Pipeline error: ${errMsg}`);
       process.exit(1);
