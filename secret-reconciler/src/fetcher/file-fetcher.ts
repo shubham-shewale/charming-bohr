@@ -4,9 +4,11 @@ import crypto from "node:crypto";
 import type { CanonicalSource } from "../types.js";
 import { getContentIdentity } from "../csv/reader.js";
 import { fetchGitHubFile } from "../providers/github-provider.js";
+import { fetchAzureDevOpsFile } from "../providers/azure-devops-provider.js";
 
 export interface FileFetcherOptions {
   githubPat: string;
+  azureDevOpsPat?: string;
   tempDir?: string;
   /** Optional custom provider override for testing or Azure DevOps extensibility. */
   fetchProvider?: (source: CanonicalSource) => Promise<string>;
@@ -18,6 +20,7 @@ export interface FileFetcherOptions {
  */
 export class FileFetcher {
   private githubPat: string;
+  private azureDevOpsPat?: string;
   private tempDir: string;
   private fetchProvider?: (source: CanonicalSource) => Promise<string>;
   private inFlightFetches = new Map<string, Promise<string>>();
@@ -25,6 +28,7 @@ export class FileFetcher {
 
   constructor(options: FileFetcherOptions) {
     this.githubPat = options.githubPat;
+    this.azureDevOpsPat = options.azureDevOpsPat;
     this.tempDir = options.tempDir ?? path.join(process.cwd(), "tmp");
     this.fetchProvider = options.fetchProvider;
   }
@@ -51,9 +55,19 @@ export class FileFetcher {
     // Create a new fetch promise
     const promise = (async () => {
       try {
-        const content = this.fetchProvider
-          ? await this.fetchProvider(source)
-          : await fetchGitHubFile(source, this.githubPat);
+        let content = "";
+        if (this.fetchProvider) {
+          content = await this.fetchProvider(source);
+        } else if (source.provider === "github") {
+          content = await fetchGitHubFile(source, this.githubPat);
+        } else if (source.provider === "azure-devops") {
+          if (!this.azureDevOpsPat) {
+            throw new Error("Missing AZURE_DEVOPS_PAT for Azure DevOps source");
+          }
+          content = await fetchAzureDevOpsFile(source, this.azureDevOpsPat);
+        } else {
+          throw new Error(`Unsupported provider: ${source.provider}`);
+        }
 
         if (!fs.existsSync(this.tempDir)) {
           fs.mkdirSync(this.tempDir, { recursive: true });

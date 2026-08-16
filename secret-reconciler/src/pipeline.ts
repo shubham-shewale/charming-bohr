@@ -79,6 +79,7 @@ export async function runPipeline(
   // Initialize file fetcher and cost tracker
   const fetcher = new FileFetcher({
     githubPat: config.githubPat,
+    azureDevOpsPat: config.azureDevOpsPat,
     fetchProvider: options.fetchProvider,
   });
 

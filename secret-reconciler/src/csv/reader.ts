@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { parse } from "csv-parse";
-import { parseGitHubScmLink } from "../parsers/github.js";
+import { parseScmLink } from "../parsers/index.js";
 import type {
   CanonicalSource,
   FileWorkItem,
@@ -142,8 +142,7 @@ export async function readFindingsCsv(
         initialStatus = "skipped";
       }
     } else {
-      // Currently using GitHub parser (extensible to Azure DevOps later)
-      const parseRes: ScmParseResult = parseGitHubScmLink(rawUrl);
+      const parseRes: ScmParseResult = parseScmLink(rawUrl);
       if (parseRes.ok) {
         canonicalSource = parseRes.value;
       } else {

@@ -22,6 +22,8 @@ export interface CanonicalSource {
   provider: ScmProvider;
   /** Organisation or account that owns the repository. */
   org: string;
+  /** Project name (Azure DevOps only). */
+  project?: string;
   /** Repository name (without the org prefix). */
   repo: string;
   /** Full 40-character commit SHA. */
