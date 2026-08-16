@@ -89,12 +89,8 @@ describe("Mixed Pipeline Support (GitHub + Azure DevOps)", () => {
     const azCall = interceptedCalls.find((c) => c.url.includes("dev.azure.com"));
     expect(azCall).toBeDefined();
     const expectedAzBasic = `Basic ${Buffer.from(":secret-azure-pat").toString("base64")}`;
-    expect(azCall?.auth).toBe(expectedBasicAuth(expectedAzBasic));
+    expect(azCall?.auth).toBe(expectedAzBasic);
     expect(azCall?.url).toContain("https://dev.azure.com/org2/proj2/_apis/git/repositories/repo2/items");
-
-    function expectedBasicAuth(expected: string) {
-      return expected;
-    }
 
     // Verify output CSV has both rows
     expect(fs.existsSync(outputFile)).toBe(true);
