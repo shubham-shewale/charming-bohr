@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+broader_arch.rtf
+chatgpt_arch_review.txt.rtf
+
+# Temp files
+tmp/
+

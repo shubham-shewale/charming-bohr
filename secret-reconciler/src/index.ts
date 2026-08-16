@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { loadConfig, ConfigError } from "./config.js";
-
+import { runPipeline } from "./pipeline.js";
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -16,7 +16,7 @@ program
   )
   .version("0.1.0")
   .argument("<csv...>", "One or more CSV finding files to process")
-  .option("-o, --output <path>", "Path to write the output CSV (default: <first-input>-out.csv)")
+  .option("-o, --output <path>", "Path to write the output CSV")
   .option("--retry-failed", "Re-process rows previously marked as failed", false)
   .option("--keep-files", "Do not delete fetched source files after processing", false)
   .action(async (csvPaths: string[], options: { output?: string; retryFailed: boolean; keepFiles: boolean }) => {
@@ -38,15 +38,26 @@ program
     console.log(`  Concurrency: ${config.concurrency}`);
     console.log(`  Model:       ${config.anthropicModel}`);
     console.log();
-    console.log(`Input file(s):`);
-    for (const p of csvPaths) {
-      console.log(`  • ${p}`);
+
+    // ── 3. Run Pipeline ──────────────────────────────────────────────────────
+    try {
+      const summary = await runPipeline(csvPaths, {
+        config,
+        output: options.output,
+        retryFailed: options.retryFailed,
+        keepFiles: options.keepFiles,
+      });
+
+      console.log(`✓ Reconciliation complete!`);
+      console.log(`  Output CSV: ${summary.outputPath}`);
+      console.log(`  Total:      ${summary.totalFindings}`);
+      console.log(`  Completed:  ${summary.completed} (Verified: ${summary.verified}, Unverified: ${summary.unverified}, Not Found: ${summary.notFound})`);
+      console.log(`  Skipped:    ${summary.skipped}`);
+      console.log(`  Failed:     ${summary.failed}`);
+    } catch (err: any) {
+      console.error(`Pipeline error: ${err?.message || err}`);
+      process.exit(1);
     }
-    if (options.output) console.log(`Output:  ${options.output}`);
-    if (options.retryFailed) console.log("  --retry-failed: ON");
-    if (options.keepFiles) console.log("  --keep-files:   ON");
-    console.log();
-    console.log("Pipeline not yet implemented (ticket 02+).");
   });
 
 program.parse();

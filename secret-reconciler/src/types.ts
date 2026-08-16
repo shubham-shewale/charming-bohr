@@ -58,3 +58,72 @@ export interface ParseError {
 export type ScmParseResult =
   | { ok: true; value: CanonicalSource }
   | { ok: false; error: ParseError };
+
+/**
+ * Processing status of a finding in the pipeline.
+ * @see CONTEXT.md — Status
+ */
+export type FindingStatus = "completed" | "failed" | "skipped" | "pending";
+
+/**
+ * Result outcome of running TruffleHog analysis on a finding's line range.
+ * @see CONTEXT.md — TruffleHog Result
+ */
+export type TruffleHogResult = "verified" | "unverified" | "not_found" | "";
+
+/**
+ * A normalized finding referenced from an input CSV row.
+ * @see CONTEXT.md — Finding
+ */
+export interface FindingRef {
+  /** 0-based index of the finding row within its input CSV file. */
+  rowIndex: number;
+  /** Name or path of the source CSV file this finding originated from. */
+  sourceFile: string;
+  /** Map of column header to string value representing the original CSV row verbatim. */
+  rawRow: Record<string, string>;
+  /** The parsed SCM canonical source, if parsing succeeded. */
+  canonicalSource?: CanonicalSource;
+  /** Parse error details if SCM link parsing failed. */
+  parseError?: ParseError;
+  /** Initial processing status computed when reading the CSV row. */
+  initialStatus: FindingStatus;
+}
+
+/**
+ * Unit of work representing one unique Content Identity and all findings associated with it.
+ * @see CONTEXT.md — File Work Item
+ */
+export interface FileWorkItem {
+  /** Unique key: provider::org/repo::revision::filePath */
+  contentIdentity: string;
+  provider: ScmProvider;
+  org: string;
+  repo: string;
+  revision: string;
+  filePath: string;
+  findings: FindingRef[];
+}
+
+/**
+ * A single secret detection extracted from TruffleHog filesystem JSON output.
+ */
+export interface TruffleHogDetection {
+  detectorName: string;
+  verified: boolean;
+  lineStart: number;
+  lineEnd: number;
+  raw?: string;
+}
+
+/**
+ * Final processing result for a finding row, to be written to the output CSV.
+ */
+export interface FindingResult {
+  findingRef: FindingRef;
+  status: FindingStatus;
+  trufflehogResult: TruffleHogResult;
+  trufflehogDetector: string;
+  error: string;
+}
+
