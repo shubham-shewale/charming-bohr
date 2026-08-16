@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { readFindingsCsv, groupFindingsByContentIdentity } from "../csv/reader.js";
+import { readFindingsCsv, groupFindingsByContentIdentity, mergeHeaders } from "../csv/reader.js";
 import { writeResultsCsv } from "../csv/writer.js";
 import type { FindingResult } from "../types.js";
 
@@ -218,5 +218,12 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
     expect(lines[1]).toContain("rule-01,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,,,unsuppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
     // Row 2 should have alice and test secret
     expect(lines[2]).toContain("rule-02,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,alice,test secret,suppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
+  });
+
+  it("mergeHeaders combines multiple header arrays with normalized deduplication", () => {
+    const list1 = ["Rule ID", "SCM Link", "status"];
+    const list2 = ["scm_link", "Severity", "STATUS", "Notes"];
+    const merged = mergeHeaders(list1, list2);
+    expect(merged).toEqual(["Rule ID", "SCM Link", "status", "Severity", "Notes"]);
   });
 });

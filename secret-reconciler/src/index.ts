@@ -78,6 +78,30 @@ program
       }
     };
 
+    const printSummaryMetrics = (pipelineSummary: typeof summary) => {
+      console.log(`  Total:      ${pipelineSummary.totalFindings}`);
+      console.log(`  Completed:  ${pipelineSummary.completed}`);
+      if (pipelineSummary.pending > 0 || pipelineSummary.interrupted) {
+        console.log(`  Pending:    ${pipelineSummary.pending}`);
+      }
+      if (!pipelineSummary.interrupted) {
+        if (config.flow !== "llm-only") {
+          console.log(`  TruffleHog: Completed: ${pipelineSummary.completed} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
+        }
+        if (config.flow !== "trufflehog-only") {
+          console.log(`  LLM Classifications: False Positives: ${pipelineSummary.falsePositive}, Likely Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
+          if (pipelineSummary.tokenUsage) {
+            console.log(`  Token Usage: Input: ${pipelineSummary.tokenUsage.inputTokens}, Output: ${pipelineSummary.tokenUsage.outputTokens}, Estimated Cost: $${pipelineSummary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
+          }
+        }
+      }
+      console.log(`  Skipped:    ${pipelineSummary.skipped}`);
+      console.log(`  Failed:     ${pipelineSummary.failed}`);
+      if (pipelineSummary.tempDirKept) {
+        console.log(`  Temp files kept at: ${pipelineSummary.tempDirKept}`);
+      }
+    };
+
     // ── 5. Run Pipeline ──────────────────────────────────────────────────────
     try {
       const summary = await runPipeline(csvPaths, {
@@ -93,34 +117,13 @@ program
 
       if (summary.interrupted) {
         console.log(`\n⚠ Run interrupted by signal. Completed findings saved to: ${summary.outputPath}`);
-        console.log(`  Total:      ${summary.totalFindings}`);
-        console.log(`  Completed:  ${summary.completed}`);
-        console.log(`  Pending:    ${summary.pending}`);
-        console.log(`  Skipped:    ${summary.skipped}`);
-        console.log(`  Failed:     ${summary.failed}`);
-        if (summary.tempDirKept) {
-          console.log(`  Temp files kept at: ${summary.tempDirKept}`);
-        }
+        printSummaryMetrics(summary);
         process.exit(130);
       }
 
       console.log(`✓ Reconciliation complete!`);
       console.log(`  Output CSV: ${summary.outputPath}`);
-      console.log(`  Total:      ${summary.totalFindings}`);
-      if (config.flow !== "llm-only") {
-        console.log(`  TruffleHog: Completed: ${summary.completed} (Verified: ${summary.verified}, Unverified: ${summary.unverified}, Not Found: ${summary.notFound})`);
-      }
-      if (config.flow !== "trufflehog-only") {
-        console.log(`  LLM Classifications: False Positives: ${summary.falsePositive}, Likely Secrets: ${summary.likelySecret}, Uncertain: ${summary.uncertain}, Invalid Output: ${summary.llmInvalidOutput}`);
-        if (summary.tokenUsage) {
-          console.log(`  Token Usage: Input: ${summary.tokenUsage.inputTokens}, Output: ${summary.tokenUsage.outputTokens}, Estimated Cost: $${summary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
-        }
-      }
-      console.log(`  Skipped:    ${summary.skipped}`);
-      console.log(`  Failed:     ${summary.failed}`);
-      if (summary.tempDirKept) {
-        console.log(`  Temp files kept at: ${summary.tempDirKept}`);
-      }
+      printSummaryMetrics(summary);
     } catch (err: unknown) {
       clearProgressLine();
       const errMsg = err instanceof Error ? err.message : String(err);

@@ -47,6 +47,26 @@ export function normalizeHeader(h: string): string {
 }
 
 /**
+ * Merges multiple header lists preserving first-seen order and normalized uniqueness.
+ */
+export function mergeHeaders(
+  ...headerLists: (string[] | readonly string[])[]
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const list of headerLists) {
+    for (const h of list) {
+      const norm = normalizeHeader(h);
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        result.push(h);
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * Finds the header name matching SCM link across common column variants.
  */
 function findScmLinkHeader(headers: string[]): string | undefined {

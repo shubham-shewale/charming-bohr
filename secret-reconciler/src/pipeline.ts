@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import pLimit from "p-limit";
 import type { AppConfig } from "./config.js";
-import { groupFindingsByContentIdentity, readFindingsCsv, normalizeHeader } from "./csv/reader.js";
+import { groupFindingsByContentIdentity, readFindingsCsv, mergeHeaders } from "./csv/reader.js";
 import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
@@ -121,22 +121,17 @@ export async function runPipeline(
 
   // Read all input CSV files
   const allFindings: FindingRef[] = [];
-  const mergedHeaders: string[] = [];
-  const seenNormHeaders = new Set<string>();
+  const inputHeadersList: string[][] = [];
 
   for (const inputPath of inputPaths) {
     const { findings, headers } = await readFindingsCsv(inputPath, {
       retryFailed: options.retryFailed,
     });
-    for (const h of headers) {
-      const norm = normalizeHeader(h);
-      if (!seenNormHeaders.has(norm)) {
-        seenNormHeaders.add(norm);
-        mergedHeaders.push(h);
-      }
-    }
+    inputHeadersList.push(headers);
     allFindings.push(...findings);
   }
+
+  const mergedHeaders = mergeHeaders(...inputHeadersList);
 
   // Group pending findings by Content Identity
   const workMap = groupFindingsByContentIdentity(allFindings);

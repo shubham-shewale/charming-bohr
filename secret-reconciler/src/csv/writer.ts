@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify } from "csv-stringify/sync";
 import type { FindingResult } from "../types.js";
-import { normalizeHeader } from "./reader.js";
+import { mergeHeaders, normalizeHeader } from "./reader.js";
 
 /**
  * Result column names added by secret-reconciler.
@@ -34,24 +34,7 @@ export function writeResultsCsv(
   }
 
   // Determine headers map (preserve original header names, append missing result columns)
-  const seenNormHeaders = new Set<string>();
-  const finalHeaders: string[] = [];
-
-  for (const h of originalHeaders) {
-    const norm = normalizeHeader(h);
-    if (!seenNormHeaders.has(norm)) {
-      seenNormHeaders.add(norm);
-      finalHeaders.push(h);
-    }
-  }
-
-  for (const col of RESULT_COLUMNS) {
-    const normCol = normalizeHeader(col);
-    if (!seenNormHeaders.has(normCol)) {
-      seenNormHeaders.add(normCol);
-      finalHeaders.push(col);
-    }
-  }
+  const finalHeaders = mergeHeaders(originalHeaders, RESULT_COLUMNS);
 
   // Build CSV records
   const records = results.map((res) => {

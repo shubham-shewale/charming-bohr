@@ -106,6 +106,17 @@ export class FileFetcher {
         // ignore cleanup errors
       }
     }
+    const parentDir = path.dirname(this.tempDir);
+    if (fs.existsSync(parentDir)) {
+      try {
+        const remaining = fs.readdirSync(parentDir);
+        if (remaining.length === 0) {
+          fs.rmdirSync(parentDir);
+        }
+      } catch {
+        // ignore cleanup errors
+      }
+    }
     this.savedFiles.clear();
   }
 }
