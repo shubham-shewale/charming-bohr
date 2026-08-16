@@ -6,7 +6,15 @@ import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
 import { runTruffleHog, type RunTruffleHogOptions } from "./trufflehog/runner.js";
-import type { CanonicalSource, FindingRef, FindingResult } from "./types.js";
+import {
+  type CanonicalSource,
+  type FindingRef,
+  type FindingResult,
+  buildNonPendingFindingResult,
+} from "./types.js";
+
+import { ClaudeAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
+import { CostTracker } from "./llm/cost-tracker.js";
 
 export interface PipelineOptions {
   config: AppConfig;
@@ -15,6 +23,7 @@ export interface PipelineOptions {
   keepFiles?: boolean;
   fetchProvider?: (source: CanonicalSource) => Promise<string>;
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
+  anthropicClient?: AnthropicClientLike;
 }
 
 export interface PipelineSummary {
@@ -24,9 +33,27 @@ export interface PipelineSummary {
   verified: number;
   unverified: number;
   notFound: number;
+  falsePositive: number;
+  likelySecret: number;
+  uncertain: number;
+  llmInvalidOutput: number;
   skipped: number;
   failed: number;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+  };
   results: FindingResult[];
+}
+
+async function scanWithTruffleHog(
+  localFilePath: string,
+  findings: FindingRef[],
+  execFn?: RunTruffleHogOptions["execFn"]
+): Promise<FindingResult[]> {
+  const detections = await runTruffleHog(localFilePath, { execFn });
+  return matchDetectionsToFindings(findings, detections);
 }
 
 /**
@@ -49,10 +76,17 @@ export async function runPipeline(
     outputPath = path.join(dir, `${base}-${timestamp}.csv`);
   }
 
-  // Initialize file fetcher
+  // Initialize file fetcher and cost tracker
   const fetcher = new FileFetcher({
     githubPat: config.githubPat,
     fetchProvider: options.fetchProvider,
+  });
+
+  const costTracker = new CostTracker();
+  const claudeAnalyzer = new ClaudeAnalyzer({
+    config,
+    anthropicClient: options.anthropicClient,
+    costTracker,
   });
 
   // Read all input CSV files
@@ -83,10 +117,18 @@ export async function runPipeline(
       const sampleSource = workItem.findings[0]!.canonicalSource!;
       try {
         const localFilePath = await fetcher.fetchFile(sampleSource);
-        const detections = await runTruffleHog(localFilePath, {
-          execFn: options.trufflehogExecFn,
-        });
-        return matchDetectionsToFindings(workItem.findings, detections);
+
+        if (config.flow === "llm-only") {
+          return await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
+        } else if (config.flow === "trufflehog-only") {
+          return await scanWithTruffleHog(
+            localFilePath,
+            workItem.findings,
+            options.trufflehogExecFn
+          );
+        } else {
+          throw new Error(`Flow "${config.flow}" is not supported yet.`);
+        }
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         return produceErrorResultsForWorkItem(workItem, errMsg);
@@ -111,8 +153,7 @@ export async function runPipeline(
     if (processedResultsMap.has(finding)) {
       finalResults.push(processedResultsMap.get(finding)!);
     } else {
-      const nonPendingRes = matchDetectionsToFindings([finding], [])[0]!;
-      finalResults.push(nonPendingRes);
+      finalResults.push(buildNonPendingFindingResult(finding));
     }
   }
 
@@ -138,6 +179,10 @@ export async function runPipeline(
   let verified = 0;
   let unverified = 0;
   let notFound = 0;
+  let falsePositive = 0;
+  let likelySecret = 0;
+  let uncertain = 0;
+  let llmInvalidOutput = 0;
   let skipped = 0;
   let failed = 0;
 
@@ -147,12 +192,21 @@ export async function runPipeline(
       if (res.trufflehogResult === "verified") verified++;
       else if (res.trufflehogResult === "unverified") unverified++;
       else if (res.trufflehogResult === "not_found") notFound++;
+
+      if (res.llmClassification === "false_positive") falsePositive++;
+      else if (res.llmClassification === "likely_secret") likelySecret++;
+      else if (res.llmClassification === "uncertain") uncertain++;
     } else if (res.status === "skipped") {
       skipped++;
     } else if (res.status === "failed") {
       failed++;
+      if (res.error === "llm_invalid_output") {
+        llmInvalidOutput++;
+      }
     }
   }
+
+  const tokenUsage = costTracker.getUsage();
 
   return {
     outputPath,
@@ -161,8 +215,13 @@ export async function runPipeline(
     verified,
     unverified,
     notFound,
+    falsePositive,
+    likelySecret,
+    uncertain,
+    llmInvalidOutput,
     skipped,
     failed,
+    tokenUsage: config.flow !== "trufflehog-only" ? tokenUsage : undefined,
     results: finalResults,
   };
 }

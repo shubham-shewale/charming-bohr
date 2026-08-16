@@ -117,13 +117,39 @@ export interface TruffleHogDetection {
 }
 
 /**
+ * Three-valued classification result of LLM analysis on a finding.
+ * @see CONTEXT.md — LLM Classification
+ */
+export type LlmClassification = "false_positive" | "likely_secret" | "uncertain";
+
+/**
  * Final processing result for a finding row, to be written to the output CSV.
  */
 export interface FindingResult {
   findingRef: FindingRef;
   status: FindingStatus;
-  trufflehogResult: TruffleHogResult;
-  trufflehogDetector: string;
-  error: string;
+  trufflehogResult?: TruffleHogResult;
+  trufflehogDetector?: string;
+  llmClassification?: LlmClassification;
+  llmReason?: string;
+  llmConfidence?: number;
+  error?: string;
 }
+
+/**
+ * Builds a FindingResult for a non-pending finding row preserving rawRow values.
+ */
+export function buildNonPendingFindingResult(finding: FindingRef): FindingResult {
+  return {
+    findingRef: finding,
+    status: finding.initialStatus,
+    trufflehogResult: (finding.rawRow["trufflehog_result"] as TruffleHogResult) ?? "",
+    trufflehogDetector: finding.rawRow["trufflehog_detector"] ?? "",
+    llmClassification: (finding.rawRow["llm_classification"] as LlmClassification) || undefined,
+    llmReason: finding.rawRow["llm_reason"] ?? "",
+    llmConfidence: finding.rawRow["llm_confidence"] ? Number(finding.rawRow["llm_confidence"]) : undefined,
+    error: finding.parseError?.message ?? finding.rawRow["error"] ?? "",
+  };
+}
+
 

@@ -11,6 +11,9 @@ export const RESULT_COLUMNS = [
   "status",
   "trufflehog_result",
   "trufflehog_detector",
+  "llm_classification",
+  "llm_reason",
+  "llm_confidence",
   "error",
 ] as const;
 
@@ -48,12 +51,24 @@ export function writeResultsCsv(
   const records = results.map((res) => {
     const row: Record<string, string> = { ...res.findingRef.rawRow };
 
+    // Determine LLM classification value for CSV (including llm_invalid_output on failed LLM parses)
+    let classificationStr = res.llmClassification ?? "";
+    if (!classificationStr && res.status === "failed" && res.error === "llm_invalid_output") {
+      classificationStr = "llm_invalid_output" as const;
+    }
+
+    const confidenceStr =
+      res.llmConfidence !== undefined ? String(res.llmConfidence) : "";
+
     // Fill/overwrite result values
     setColumnValue(row, finalHeaders, "source_file", res.findingRef.sourceFile);
     setColumnValue(row, finalHeaders, "status", res.status);
-    setColumnValue(row, finalHeaders, "trufflehog_result", res.trufflehogResult);
-    setColumnValue(row, finalHeaders, "trufflehog_detector", res.trufflehogDetector);
-    setColumnValue(row, finalHeaders, "error", res.error);
+    setColumnValue(row, finalHeaders, "trufflehog_result", res.trufflehogResult ?? "");
+    setColumnValue(row, finalHeaders, "trufflehog_detector", res.trufflehogDetector ?? "");
+    setColumnValue(row, finalHeaders, "llm_classification", classificationStr);
+    setColumnValue(row, finalHeaders, "llm_reason", res.llmReason ?? "");
+    setColumnValue(row, finalHeaders, "llm_confidence", confidenceStr);
+    setColumnValue(row, finalHeaders, "error", res.error ?? "");
 
     return row;
   });

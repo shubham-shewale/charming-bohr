@@ -113,13 +113,16 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
       status: "completed",
       trufflehogResult: "verified",
       trufflehogDetector: "AWS",
+      llmClassification: "likely_secret",
+      llmReason: "Found key",
+      llmConfidence: 0.95,
       error: "",
     };
 
     writeResultsCsv(outputPath, [mockFinding], originalHeaders);
 
     const writtenContent = fs.readFileSync(outputPath, "utf-8");
-    expect(writtenContent).toContain("Rule ID,SCM Link,source_file,status,trufflehog_result,trufflehog_detector,error");
+    expect(writtenContent).toContain("Rule ID,SCM Link,source_file,status,trufflehog_result,trufflehog_detector,llm_classification,llm_reason,llm_confidence,error");
     expect(writtenContent).toContain("rule-123");
     expect(writtenContent).toContain("completed");
     expect(writtenContent).toContain("verified");

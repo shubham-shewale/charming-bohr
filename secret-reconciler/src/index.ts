@@ -51,7 +51,15 @@ program
       console.log(`✓ Reconciliation complete!`);
       console.log(`  Output CSV: ${summary.outputPath}`);
       console.log(`  Total:      ${summary.totalFindings}`);
-      console.log(`  Completed:  ${summary.completed} (Verified: ${summary.verified}, Unverified: ${summary.unverified}, Not Found: ${summary.notFound})`);
+      if (config.flow !== "llm-only") {
+        console.log(`  TruffleHog: Completed: ${summary.completed} (Verified: ${summary.verified}, Unverified: ${summary.unverified}, Not Found: ${summary.notFound})`);
+      }
+      if (config.flow !== "trufflehog-only") {
+        console.log(`  LLM Classifications: False Positives: ${summary.falsePositive}, Likely Secrets: ${summary.likelySecret}, Uncertain: ${summary.uncertain}, Invalid Output: ${summary.llmInvalidOutput}`);
+        if (summary.tokenUsage) {
+          console.log(`  Token Usage: Input: ${summary.tokenUsage.inputTokens}, Output: ${summary.tokenUsage.outputTokens}, Estimated Cost: $${summary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
+        }
+      }
       console.log(`  Skipped:    ${summary.skipped}`);
       console.log(`  Failed:     ${summary.failed}`);
     } catch (err: unknown) {

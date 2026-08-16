@@ -1,9 +1,10 @@
-import type {
-  FileWorkItem,
-  FindingRef,
-  FindingResult,
-  TruffleHogDetection,
-  TruffleHogResult,
+import {
+  type FileWorkItem,
+  type FindingRef,
+  type FindingResult,
+  type TruffleHogDetection,
+  type TruffleHogResult,
+  buildNonPendingFindingResult,
 } from "../types.js";
 
 /**
@@ -21,13 +22,7 @@ export function matchDetectionsToFindings(
   return findings.map((finding) => {
     // If finding is already in a terminal/non-pending status, preserve it
     if (finding.initialStatus !== "pending") {
-      return {
-        findingRef: finding,
-        status: finding.initialStatus,
-        trufflehogResult: (finding.rawRow["trufflehog_result"] as TruffleHogResult) ?? "",
-        trufflehogDetector: finding.rawRow["trufflehog_detector"] ?? "",
-        error: finding.parseError?.message ?? finding.rawRow["error"] ?? "",
-      };
+      return buildNonPendingFindingResult(finding);
     }
 
     if (!finding.canonicalSource) {
