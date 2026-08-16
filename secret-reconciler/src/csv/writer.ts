@@ -84,7 +84,22 @@ export function writeResultsCsv(
     columns: finalHeaders,
   });
 
-  fs.writeFileSync(outputPath, outputContent, { encoding: "utf-8" });
+  // Write atomically to avoid corrupted output files on interrupt
+  const tempPath = `${outputPath}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.writeFileSync(tempPath, outputContent, { encoding: "utf-8" });
+    fs.renameSync(tempPath, outputPath);
+  } catch {
+    // If rename fails (e.g. cross-device link), fallback to direct write
+    fs.writeFileSync(outputPath, outputContent, { encoding: "utf-8" });
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 function setColumnValue(

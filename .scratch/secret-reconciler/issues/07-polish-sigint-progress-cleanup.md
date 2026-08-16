@@ -14,15 +14,15 @@
 
 **Blocked by:** 02 — End-to-end TruffleHog flow
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] SIGINT/SIGTERM handler: stops new work, flushes completed results, cleans up, exits non-zero
-- [ ] In-flight work on SIGINT: brief timeout, then unfinished findings written as `status=pending`
-- [ ] Output CSV never left corrupted after SIGINT
-- [ ] Progress output: periodic one-line terminal updates (files, findings, tokens, cost)
-- [ ] `MAX_FILE_SIZE_KB` check after fetch: oversized files → all findings `status=skipped` with error
-- [ ] `tmp/` cleanup at end of run
-- [ ] `--keep-files` flag skips cleanup, prints path
-- [ ] Auto-generated output filename: `results-{timestamp}.csv` when `--output` not specified
-- [ ] Integration test: SIGINT during processing → output CSV written, no corruption
-- [ ] Integration test: file exceeding size limit → findings skipped with appropriate error
+- [x] SIGINT/SIGTERM handler: stops new work, flushes completed results, cleans up, exits non-zero
+- [x] In-flight work on SIGINT: brief timeout, then unfinished findings written as `status=pending`
+- [x] Output CSV never left corrupted after SIGINT
+- [x] Progress output: periodic one-line terminal updates (files, findings, tokens, cost)
+- [x] `MAX_FILE_SIZE_KB` check after fetch: oversized files → all findings `status=skipped` with error
+- [x] `tmp/` cleanup at end of run
+- [x] `--keep-files` flag skips cleanup, prints path
+- [x] Auto-generated output filename: `results-{timestamp}.csv` when `--output` not specified
+- [x] Integration test: SIGINT during processing → output CSV written, no corruption
+- [x] Integration test: file exceeding size limit → findings skipped with appropriate error

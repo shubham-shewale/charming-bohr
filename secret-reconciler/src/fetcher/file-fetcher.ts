@@ -29,8 +29,14 @@ export class FileFetcher {
   constructor(options: FileFetcherOptions) {
     this.githubPat = options.githubPat;
     this.azureDevOpsPat = options.azureDevOpsPat;
-    this.tempDir = options.tempDir ?? path.join(process.cwd(), "tmp");
+    this.tempDir =
+      options.tempDir ??
+      path.join(process.cwd(), "tmp", `run-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`);
     this.fetchProvider = options.fetchProvider;
+  }
+
+  getTempDir(): string {
+    return this.tempDir;
   }
 
   /**
@@ -38,16 +44,16 @@ export class FileFetcher {
    * Deduplicates concurrent requests for the same Content Identity via an in-flight promise cache.
    */
   async fetchFile(source: CanonicalSource): Promise<string> {
-    const key = getContentIdentity(source);
+    const contentIdentity = getContentIdentity(source);
 
     // Return cached saved local path if available
-    const existingPath = this.savedFiles.get(key);
+    const existingPath = this.savedFiles.get(contentIdentity);
     if (existingPath && fs.existsSync(existingPath)) {
       return existingPath;
     }
 
     // Return existing in-flight fetch promise if currently fetching
-    const inFlight = this.inFlightFetches.get(key);
+    const inFlight = this.inFlightFetches.get(contentIdentity);
     if (inFlight) {
       return inFlight;
     }
@@ -73,33 +79,31 @@ export class FileFetcher {
           fs.mkdirSync(this.tempDir, { recursive: true });
         }
 
-        const fileHash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 12);
+        const fileHash = crypto.createHash("sha256").update(contentIdentity).digest("hex").slice(0, 12);
         const safeBasename = path.basename(source.filePath).replace(/[^a-zA-Z0-9._-]/g, "_");
         const localPath = path.join(this.tempDir, `${fileHash}_${safeBasename}`);
 
         fs.writeFileSync(localPath, content, "utf-8");
-        this.savedFiles.set(key, localPath);
+        this.savedFiles.set(contentIdentity, localPath);
         return localPath;
       } finally {
-        this.inFlightFetches.delete(key);
+        this.inFlightFetches.delete(contentIdentity);
       }
     })();
 
-    this.inFlightFetches.set(key, promise);
+    this.inFlightFetches.set(contentIdentity, promise);
     return promise;
   }
 
   /**
-   * Deletes all saved temp files managed by this fetcher.
+   * Deletes the temp directory and all fetched files managed by this fetcher.
    */
   cleanup(): void {
-    for (const filePath of this.savedFiles.values()) {
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch {
-          // ignore cleanup errors
-        }
+    if (fs.existsSync(this.tempDir)) {
+      try {
+        fs.rmSync(this.tempDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
       }
     }
     this.savedFiles.clear();

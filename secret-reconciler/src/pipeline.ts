@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import pLimit from "p-limit";
 import type { AppConfig } from "./config.js";
@@ -16,6 +17,17 @@ import {
 import { ClaudeAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
 import { CostTracker } from "./llm/cost-tracker.js";
 
+export interface PipelineProgress {
+  filesProcessed: number;
+  totalFiles: number;
+  findingsCompleted: number;
+  totalFindings: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokensUsed: number;
+  estimatedCostUsd: number;
+}
+
 export interface PipelineOptions {
   config: AppConfig;
   output?: string;
@@ -24,6 +36,9 @@ export interface PipelineOptions {
   fetchProvider?: (source: CanonicalSource) => Promise<string>;
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
   anthropicClient?: AnthropicClientLike;
+  onProgress?: (progress: PipelineProgress) => void;
+  signal?: AbortSignal;
+  sigintTimeoutMs?: number;
 }
 
 export interface PipelineSummary {
@@ -39,12 +54,31 @@ export interface PipelineSummary {
   llmInvalidOutput: number;
   skipped: number;
   failed: number;
+  pending: number;
+  interrupted?: boolean;
+  tempDirKept?: string;
   tokenUsage?: {
     inputTokens: number;
     outputTokens: number;
     estimatedCostUsd: number;
   };
   results: FindingResult[];
+}
+
+/**
+ * Generates the default output filename formatted as results-{YYYYMMDD}T{HHMM}.csv in cwd.
+ */
+export function generateDefaultOutputFilename(
+  cwd: string = process.cwd(),
+  now: Date = new Date()
+): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const yyyy = now.getFullYear();
+  const mm = pad(now.getMonth() + 1);
+  const dd = pad(now.getDate());
+  const hh = pad(now.getHours());
+  const min = pad(now.getMinutes());
+  return path.join(cwd, `results-${yyyy}${mm}${dd}T${hh}${min}.csv`);
 }
 
 async function scanWithTruffleHog(
@@ -68,12 +102,7 @@ export async function runPipeline(
   // Determine output path
   let outputPath = options.output;
   if (!outputPath) {
-    const firstInput = inputPaths[0]!;
-    const dir = path.dirname(firstInput);
-    const ext = path.extname(firstInput);
-    const base = path.basename(firstInput, ext);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    outputPath = path.join(dir, `${base}-${timestamp}.csv`);
+    outputPath = generateDefaultOutputFilename();
   }
 
   // Initialize file fetcher and cost tracker
@@ -112,20 +141,68 @@ export async function runPipeline(
   // Group pending findings by Content Identity
   const workMap = groupFindingsByContentIdentity(allFindings);
 
-  // Setup bounded concurrency
+  // Setup bounded concurrency and cancellation tracking
   const limit = pLimit(config.concurrency);
-  const workPromises: Promise<FindingResult[]>[] = [];
+  const timeoutMs = options.sigintTimeoutMs ?? 2000;
+  let isAborted = options.signal?.aborted ?? false;
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => {
+      isAborted = true;
+    });
+  }
 
-  for (const workItem of workMap.values()) {
-    const task = limit(async () => {
-      const sampleSource = workItem.findings[0]!.canonicalSource!;
+  const processedResultsMap = new Map<FindingRef, FindingResult>();
+  let filesProcessed = 0;
+  let findingsCompleted = allFindings.filter((f) => f.initialStatus === "completed").length;
+  const totalFiles = workMap.size;
+  const totalFindings = allFindings.length;
+
+  const reportProgress = () => {
+    if (options.onProgress) {
+      const usage = costTracker.getUsage();
+      options.onProgress({
+        filesProcessed,
+        totalFiles,
+        findingsCompleted,
+        totalFindings,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        tokensUsed: usage.inputTokens + usage.outputTokens,
+        estimatedCostUsd: usage.estimatedCostUsd,
+      });
+    }
+  };
+
+  // Initial progress notification
+  reportProgress();
+
+  const workItemExecutors = Array.from(workMap.values()).map((workItem) => {
+    return async () => {
+      if (isAborted) {
+        return;
+      }
+
       try {
+        const sampleSource = workItem.findings[0]!.canonicalSource!;
         const localFilePath = await fetcher.fetchFile(sampleSource);
 
-        if (config.flow === "llm-only") {
-          return await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
+        // Check file size against MAX_FILE_SIZE_KB
+        const stats = fs.statSync(localFilePath);
+        const maxBytes = config.maxFileSizeKb * 1024;
+        let results: FindingResult[];
+
+        if (stats.size > maxBytes) {
+          const sizeKb = (stats.size / 1024).toFixed(1);
+          const errMsg = `File size (${sizeKb} KB) exceeds MAX_FILE_SIZE_KB limit of ${config.maxFileSizeKb} KB`;
+          results = workItem.findings.map((finding) => ({
+            findingRef: finding,
+            status: "skipped" as const,
+            error: errMsg,
+          }));
+        } else if (config.flow === "llm-only") {
+          results = await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
         } else if (config.flow === "trufflehog-only") {
-          return await scanWithTruffleHog(
+          results = await scanWithTruffleHog(
             localFilePath,
             workItem.findings,
             options.trufflehogExecFn
@@ -133,41 +210,83 @@ export async function runPipeline(
         } else {
           throw new Error(`Flow "${config.flow}" is not supported yet.`);
         }
+
+        for (const res of results) {
+          processedResultsMap.set(res.findingRef, res);
+        }
+
+        filesProcessed++;
+        for (const res of results) {
+          if (res.status === "completed") findingsCompleted++;
+        }
+        reportProgress();
       } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        return produceErrorResultsForWorkItem(workItem, errMsg);
+        if (!isAborted) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
+          for (const res of errResults) {
+            processedResultsMap.set(res.findingRef, res);
+          }
+          filesProcessed++;
+          reportProgress();
+        }
+      }
+    };
+  });
+
+  const executionPromise = Promise.all(workItemExecutors.map((execute) => limit(execute)));
+
+  if (options.signal) {
+    const abortTriggeredPromise = new Promise<void>((resolve) => {
+      if (options.signal!.aborted) {
+        resolve();
+      } else {
+        options.signal!.addEventListener("abort", () => resolve(), { once: true });
       }
     });
-    workPromises.push(task);
+
+    await Promise.race([
+      executionPromise,
+      abortTriggeredPromise.then(async () => {
+        isAborted = true;
+        // Wait up to timeoutMs for in-flight tasks to finish
+        await Promise.race([
+          executionPromise,
+          new Promise((r) => setTimeout(r, timeoutMs)),
+        ]);
+      }),
+    ]);
+  } else {
+    await executionPromise;
   }
 
-  const workResultsArrays = await Promise.all(workPromises);
-  const processedResultsMap = new Map<FindingRef, FindingResult>();
-
-  for (const resArray of workResultsArrays) {
-    for (const res of resArray) {
-      processedResultsMap.set(res.findingRef, res);
-    }
-  }
-
-  // Handle findings that were not part of any work item (skipped, already completed, or failed without retry)
+  // Build final results array
   const finalResults: FindingResult[] = [];
 
   for (const finding of allFindings) {
     if (processedResultsMap.has(finding)) {
       finalResults.push(processedResultsMap.get(finding)!);
+    } else if (finding.initialStatus === "pending") {
+      finalResults.push({
+        findingRef: finding,
+        status: "pending",
+        error: "",
+      });
     } else {
       finalResults.push(buildNonPendingFindingResult(finding));
     }
   }
 
-  // Write output CSV
+  // Write output CSV atomically
   writeResultsCsv(outputPath, finalResults, mergedHeaders);
 
   // Cleanup temp files if configured
-  const shouldKeep = options.keepFiles ?? !config.cleanupTempFiles;
+  const shouldKeep = options.keepFiles === true || !config.cleanupTempFiles;
+  let tempDirKept: string | undefined;
   if (!shouldKeep) {
     fetcher.cleanup();
+  } else {
+    tempDirKept = fetcher.getTempDir();
   }
 
   // Calculate summary stats
@@ -181,6 +300,7 @@ export async function runPipeline(
   let llmInvalidOutput = 0;
   let skipped = 0;
   let failed = 0;
+  let pending = 0;
 
   for (const res of finalResults) {
     if (res.status === "completed") {
@@ -199,6 +319,8 @@ export async function runPipeline(
       if (res.error === "llm_invalid_output") {
         llmInvalidOutput++;
       }
+    } else if (res.status === "pending") {
+      pending++;
     }
   }
 
@@ -217,6 +339,9 @@ export async function runPipeline(
     llmInvalidOutput,
     skipped,
     failed,
+    pending,
+    interrupted: isAborted,
+    tempDirKept,
     tokenUsage: config.flow !== "trufflehog-only" ? tokenUsage : undefined,
     results: finalResults,
   };

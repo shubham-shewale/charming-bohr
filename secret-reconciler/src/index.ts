@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { loadConfig, ConfigError } from "./config.js";
-import { runPipeline } from "./pipeline.js";
+import { runPipeline, type PipelineProgress } from "./pipeline.js";
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -18,8 +18,8 @@ program
   .argument("<csv...>", "One or more CSV finding files to process")
   .option("-o, --output <path>", "Path to write the output CSV")
   .option("--retry-failed", "Re-process rows previously marked as failed", false)
-  .option("--keep-files", "Do not delete fetched source files after processing", false)
-  .action(async (csvPaths: string[], options: { output?: string; retryFailed: boolean; keepFiles: boolean }) => {
+  .option("--keep-files", "Do not delete fetched source files after processing")
+  .action(async (csvPaths: string[], options: { output?: string; retryFailed: boolean; keepFiles?: boolean }) => {
     // ── 1. Load and validate config — fail fast ─────────────────────────────
     let config;
     try {
@@ -39,14 +39,65 @@ program
     console.log(`  Model:       ${config.anthropicModel}`);
     console.log();
 
-    // ── 3. Run Pipeline ──────────────────────────────────────────────────────
+    // ── 3. Signal Handling (SIGINT/SIGTERM) ──────────────────────────────────
+    const abortController = new AbortController();
+    let sigintCount = 0;
+
+    const handleSignal = (signalName: string) => {
+      sigintCount++;
+      if (sigintCount === 1) {
+        process.stderr.write(`\nReceived ${signalName}. Stopping new work, finishing in-flight requests, and flushing output CSV...\n`);
+        abortController.abort();
+      } else {
+        process.stderr.write(`\nForced termination on second ${signalName}.\n`);
+        process.exit(130);
+      }
+    };
+
+    process.on("SIGINT", () => handleSignal("SIGINT"));
+    process.on("SIGTERM", () => handleSignal("SIGTERM"));
+
+    // ── 4. Progress Reporting ────────────────────────────────────────────────
+    let lastProgressLen = 0;
+    const isInteractive = Boolean(process.stdout.isTTY);
+
+    const onProgress = (progress: PipelineProgress) => {
+      const line = `[Progress] Files: ${progress.filesProcessed}/${progress.totalFiles} | Findings: ${progress.findingsCompleted}/${progress.totalFindings} | Tokens: ${progress.tokensUsed} | Cost: $${progress.estimatedCostUsd.toFixed(4)}`;
+      if (isInteractive) {
+        process.stdout.write(`\r${line.padEnd(lastProgressLen, " ")}`);
+        lastProgressLen = line.length;
+      } else {
+        console.log(line);
+      }
+    };
+
+    // ── 5. Run Pipeline ──────────────────────────────────────────────────────
     try {
       const summary = await runPipeline(csvPaths, {
         config,
         output: options.output,
         retryFailed: options.retryFailed,
         keepFiles: options.keepFiles,
+        signal: abortController.signal,
+        onProgress,
       });
+
+      if (isInteractive && lastProgressLen > 0) {
+        process.stdout.write("\n");
+      }
+
+      if (summary.interrupted) {
+        console.log(`\n⚠ Run interrupted by signal. Completed findings saved to: ${summary.outputPath}`);
+        console.log(`  Total:      ${summary.totalFindings}`);
+        console.log(`  Completed:  ${summary.completed}`);
+        console.log(`  Pending:    ${summary.pending}`);
+        console.log(`  Skipped:    ${summary.skipped}`);
+        console.log(`  Failed:     ${summary.failed}`);
+        if (summary.tempDirKept) {
+          console.log(`  Temp files kept at: ${summary.tempDirKept}`);
+        }
+        process.exit(130);
+      }
 
       console.log(`✓ Reconciliation complete!`);
       console.log(`  Output CSV: ${summary.outputPath}`);
@@ -62,7 +113,13 @@ program
       }
       console.log(`  Skipped:    ${summary.skipped}`);
       console.log(`  Failed:     ${summary.failed}`);
+      if (summary.tempDirKept) {
+        console.log(`  Temp files kept at: ${summary.tempDirKept}`);
+      }
     } catch (err: unknown) {
+      if (isInteractive && lastProgressLen > 0) {
+        process.stdout.write("\n");
+      }
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Pipeline error: ${errMsg}`);
       process.exit(1);
