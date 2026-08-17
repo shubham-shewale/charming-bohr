@@ -73,7 +73,7 @@ export function transitionAfterLlm(llmResult: FindingResult): HybridTransitionAc
     result: {
       ...llmResult,
       status: "failed",
-      error: llmResult.error || "Missing or unrecognized LLM classification",
+      error: llmResult.error || "missing_or_unrecognized_llm_classification",
       trufflehogResult: "",
       trufflehogDetector: "",
     },

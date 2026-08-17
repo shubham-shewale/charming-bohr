@@ -131,6 +131,19 @@ export class ClaudeAnalyzer {
     return results;
   }
 
+  private failBatch(
+    batch: FileWorkItem["findings"],
+    llmReason: string,
+    error: string
+  ): FindingResult[] {
+    return batch.map((f) => ({
+      findingRef: f,
+      status: "failed",
+      llmReason,
+      error,
+    }));
+  }
+
   private async analyzeBatch(
     workItem: FileWorkItem,
     batch: FileWorkItem["findings"],
@@ -146,25 +159,34 @@ export class ClaudeAnalyzer {
       return fallback;
     };
 
-    // Build line ranges for context builder
-    const lineRanges = batch.map((f, idx) => ({
-      lineStart: f.canonicalSource?.lineStart ?? 1,
-      lineEnd: f.canonicalSource?.lineEnd ?? 1,
-      title: getTitle(f.rawRow, `Finding ${idx}`),
-    }));
+    // Build line ranges and prompt list in a single pass
+    const lineRanges: Array<{ lineStart: number; lineEnd: number; title: string }> = [];
+    const promptEntries: string[] = [];
+
+    for (let idx = 0; idx < batch.length; idx++) {
+      const f = batch[idx]!;
+      const c = f.canonicalSource;
+      const start = c?.lineStart ?? 1;
+      const end = c?.lineEnd ?? 1;
+      const rule = getTitle(f.rawRow, `Finding ${idx}`);
+
+      lineRanges.push({
+        lineStart: start,
+        lineEnd: end,
+        title: rule,
+      });
+
+      promptEntries.push(`Finding index ${idx}:
+- Title/Rule: ${rule}
+- Lines: ${start} to ${end}`);
+    }
 
     const contextResult = buildCodeContext(fileContent, lineRanges, {
       surroundingLines: this.config.surroundingLines,
       maxBytes: this.config.maxFileSizeKb * 1024,
     });
 
-    const findingsPromptList = batch.map((f, idx) => {
-      const c = f.canonicalSource;
-      const rule = getTitle(f.rawRow, "Secret Finding");
-      return `Finding index ${idx}:
-- Title/Rule: ${rule}
-- Lines: ${c?.lineStart ?? 1} to ${c?.lineEnd ?? 1}`;
-    }).join("\n\n");
+    const findingsPromptList = promptEntries.join("\n\n");
 
     const systemPrompt = `You are an expert application security engineer auditing potential hardcoded secrets in source code.
 Analyze each finding listed in the prompt within the provided code context.
@@ -220,12 +242,7 @@ ${contextResult.formattedContext}`;
       return this.parseAndValidateResponse(batch, responseText);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      return batch.map((f) => ({
-        findingRef: f,
-        status: "failed",
-        llmReason: `LLM request failed: ${errMsg}`,
-        error: "llm_invalid_output",
-      }));
+      return this.failBatch(batch, `LLM request failed: ${errMsg}`, "llm_invalid_output");
     }
   }
 
@@ -243,22 +260,20 @@ ${contextResult.formattedContext}`;
       jsonParsed = JSON.parse(cleanJson);
     } catch {
       // Complete JSON parse failure for batch
-      return batch.map((f) => ({
-        findingRef: f,
-        status: "failed",
-        llmReason: "Failed to parse JSON response from LLM",
-        error: "llm_invalid_output",
-      }));
+      return this.failBatch(
+        batch,
+        "Failed to parse JSON response from LLM",
+        "llm_invalid_output"
+      );
     }
 
     const batchParsed = llmBatchResponseSchema.safeParse(jsonParsed);
     if (!batchParsed.success) {
-      return batch.map((f) => ({
-        findingRef: f,
-        status: "failed",
-        llmReason: "Response does not match expected classifications structure",
-        error: "llm_invalid_output",
-      }));
+      return this.failBatch(
+        batch,
+        "Response does not match expected classifications structure",
+        "llm_invalid_output"
+      );
     }
 
     // Map each finding in the batch by its index

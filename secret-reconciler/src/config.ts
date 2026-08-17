@@ -44,17 +44,11 @@ function rangedIntString(min: number) {
 
 
 const configSchema = z.object({
-  FLOW: z
-    .enum(["trufflehog-only", "trufflehog", "llm-only", "llm", "hybrid"] as const, {
-      errorMap: () => ({
-        message: `Must be one of: "trufflehog-only", "llm-only", "hybrid".`,
-      }),
-    })
-    .transform((val): Flow => {
-      if (val === "llm") return "llm-only";
-      if (val === "trufflehog") return "trufflehog-only";
-      return val;
+  FLOW: z.enum(["trufflehog-only", "llm-only", "hybrid"] as const, {
+    errorMap: () => ({
+      message: `Must be one of: "trufflehog-only", "llm-only", "hybrid".`,
     }),
+  }),
   ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY must not be empty."),
   ANTHROPIC_MODEL: z.string().min(1, "ANTHROPIC_MODEL must not be empty."),
   MAX_TOKENS_PER_REQUEST: rangedIntString(1),

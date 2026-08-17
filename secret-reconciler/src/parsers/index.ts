@@ -1,9 +1,10 @@
 import type { ScmParseResult } from "../types.js";
 import { parseGitHubScmLink } from "./github.js";
 import { parseAzureDevOpsScmLink } from "./azure-devops.js";
+import { createParseError } from "./errors.js";
 
 /**
- * Determines the SCM provider from the URL and calls the appropriate parser.
+ * Determines the SCM provider from the SCM link and calls the appropriate parser.
  * Supported providers: GitHub, Azure DevOps.
  */
 export function parseScmLink(rawUrl: string): ScmParseResult {
@@ -11,7 +12,7 @@ export function parseScmLink(rawUrl: string): ScmParseResult {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    return { ok: false, error: { kind: "unsupported-host", message: "URL is not valid.", rawUrl } };
+    return createParseError("unsupported-host", "SCM link is not valid.", rawUrl);
   }
 
   if (parsed.hostname === "github.com") {
@@ -20,12 +21,9 @@ export function parseScmLink(rawUrl: string): ScmParseResult {
     return parseAzureDevOpsScmLink(rawUrl);
   }
 
-  return {
-    ok: false,
-    error: {
-      kind: "unsupported-host",
-      message: `Unsupported host "${parsed.hostname}". Only github.com and dev.azure.com are supported.`,
-      rawUrl,
-    },
-  };
+  return createParseError(
+    "unsupported-host",
+    `Unsupported host "${parsed.hostname}". Only github.com and dev.azure.com are supported.`,
+    rawUrl
+  );
 }

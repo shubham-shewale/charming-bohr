@@ -99,7 +99,7 @@ async function scanWithTruffleHog(
  * Runs the end-to-end secret reconciliation pipeline.
  */
 export async function runPipeline(
-  inputPaths: string[],
+  sourceFiles: string[],
   options: PipelineOptions
 ): Promise<PipelineSummary> {
   const { config } = options;
@@ -124,19 +124,19 @@ export async function runPipeline(
     costTracker,
   });
 
-  // Read all input CSV files
+  // Read all source CSV files
   const allFindings: FindingRef[] = [];
-  const inputHeadersList: string[][] = [];
+  const sourceFileHeadersList: string[][] = [];
 
-  for (const inputPath of inputPaths) {
-    const { findings, headers } = await readFindingsCsv(inputPath, {
+  for (const sourceFile of sourceFiles) {
+    const { findings, headers } = await readFindingsCsv(sourceFile, {
       retryFailed: options.retryFailed,
     });
-    inputHeadersList.push(headers);
+    sourceFileHeadersList.push(headers);
     allFindings.push(...findings);
   }
 
-  const mergedHeaders = mergeHeaders(...inputHeadersList);
+  const mergedHeaders = mergeHeaders(...sourceFileHeadersList);
 
   // Group pending findings by Content Identity
   const workMap = groupFindingsByContentIdentity(allFindings);
@@ -218,12 +218,11 @@ export async function runPipeline(
 
         for (const res of results) {
           processedResultsMap.set(res.findingRef, res);
+          if (res.status === "completed") {
+            findingsCompleted++;
+          }
         }
-
         filesProcessed++;
-        for (const res of results) {
-          if (res.status === "completed") findingsCompleted++;
-        }
         reportProgress();
       } catch (err: unknown) {
         if (!isAborted) {

@@ -257,12 +257,12 @@ export function groupFindingsByContentIdentity(
     }
 
     const source = finding.canonicalSource;
-    const key = getContentIdentity(source);
+    const contentIdentity = getContentIdentity(source);
 
-    let item = map.get(key);
+    let item = map.get(contentIdentity);
     if (!item) {
       item = {
-        contentIdentity: key,
+        contentIdentity,
         provider: source.provider,
         org: source.org,
         project: source.project,
@@ -271,7 +271,7 @@ export function groupFindingsByContentIdentity(
         filePath: source.filePath,
         findings: [],
       };
-      map.set(key, item);
+      map.set(contentIdentity, item);
     }
     item.findings.push(finding);
   }

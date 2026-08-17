@@ -148,3 +148,5 @@ chatgpt_arch_review.txt.rtf
 # Temp files
 tmp/
 
+.DS_Store
+

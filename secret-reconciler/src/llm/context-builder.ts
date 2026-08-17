@@ -42,10 +42,6 @@ export function buildCodeContext(
   const lines = fileContent.split(/\r?\n/);
   const totalLines = lines.length;
 
-  if (totalLines === 0) {
-    return { formattedContext: "(empty file)", mergedRanges: [], truncated: false };
-  }
-
   // 1. Expand each finding line range with surrounding lines and clamp to [1, totalLines]
   const expandedRanges: MergedRange[] = [];
   for (const f of findings) {

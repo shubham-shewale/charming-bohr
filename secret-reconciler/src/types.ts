@@ -120,14 +120,13 @@ export interface TruffleHogDetection {
 }
 
 /**
- * Three-valued classification result of LLM analysis on a finding (or llm_invalid_output on parse failure).
+ * Three-valued classification result of LLM analysis on a finding.
  * @see CONTEXT.md — LLM Classification
  */
 export type LlmClassification =
   | "false_positive"
   | "likely_secret"
-  | "uncertain"
-  | "llm_invalid_output";
+  | "uncertain";
 
 /**
  * Final processing result for a finding row, to be written to the output CSV.

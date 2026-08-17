@@ -76,6 +76,14 @@ export function parseGitHubScmLink(rawUrl: string): ScmParseResult {
     .map((s) => decodeURIComponent(s))
     .join("/");
 
+  if (!filePath) {
+    return createParseError(
+      "not-a-blob-url",
+      `Expected a file path after commit SHA in "${parsed.pathname}".`,
+      rawUrl
+    );
+  }
+
   // ── 5. Line number fragment ───────────────────────────────────────────────
   const fragment = parsed.hash.startsWith("#")
     ? parsed.hash.slice(1) // strip leading "#"
