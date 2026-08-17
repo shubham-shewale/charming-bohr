@@ -32,6 +32,7 @@ beforeEach(() => {
   delete process.env["TRUFFLEHOG_VERIFICATION_MODE"];
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
+  delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
 });
 
 afterEach(() => {
@@ -42,6 +43,7 @@ afterEach(() => {
   delete process.env["TRUFFLEHOG_VERIFICATION_MODE"];
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
+  delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
   for (const [k, v] of Object.entries(originalEnv)) {
     if (v !== undefined) process.env[k] = v;
     else delete process.env[k];
@@ -74,11 +76,12 @@ describe("loadConfig — valid configuration", () => {
     expect(config.anthropicModel).toBe("claude-3-5-sonnet-20241022");
     expect(config.maxTokensPerRequest).toBe(4096);
     expect(config.maxLlmCallsPerFile).toBe(3);
-    expect(config.githubPat).toBe("ghp_test_pat");
+    expect(config.githubPats).toEqual(["ghp_test_pat"]);
     expect(config.concurrency).toBe(5);
     expect(config.maxFileSizeKb).toBe(500);
     expect(config.surroundingLines).toBe(10);
     expect(config.cleanupTempFiles).toBe(true);
+    expect(config.githubRateLimitMaxRetries).toBe(2); // default
   });
 
   it("parses CLEANUP_TEMP_FILES=false correctly", () => {
@@ -158,6 +161,32 @@ describe("loadConfig — valid configuration", () => {
 
     withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "   " });
     expect(loadConfig().trufflehogUserAgentSuffix).toBeUndefined();
+  });
+
+  it("parses comma-separated GITHUB_PAT into an array of trimmed tokens", () => {
+    withEnv({ GITHUB_PAT: "ghp_token1, ghp_token2 , ghp_token3" });
+    const config = loadConfig();
+    expect(config.githubPats).toEqual(["ghp_token1", "ghp_token2", "ghp_token3"]);
+  });
+
+  it("parses a single GITHUB_PAT into a one-element array", () => {
+    withEnv({ GITHUB_PAT: "ghp_single" });
+    expect(loadConfig().githubPats).toEqual(["ghp_single"]);
+  });
+
+  it("GITHUB_RATE_LIMIT_MAX_RETRIES defaults to 2 when absent", () => {
+    withEnv({});
+    expect(loadConfig().githubRateLimitMaxRetries).toBe(2);
+  });
+
+  it("GITHUB_RATE_LIMIT_MAX_RETRIES accepts 0 (no retries)", () => {
+    withEnv({ GITHUB_RATE_LIMIT_MAX_RETRIES: "0" });
+    expect(loadConfig().githubRateLimitMaxRetries).toBe(0);
+  });
+
+  it("GITHUB_RATE_LIMIT_MAX_RETRIES accepts custom positive value", () => {
+    withEnv({ GITHUB_RATE_LIMIT_MAX_RETRIES: "5" });
+    expect(loadConfig().githubRateLimitMaxRetries).toBe(5);
   });
 });
 

@@ -28,6 +28,16 @@ _Avoid_: Source identity, source key
 The subset of a Canonical Source that determines unique file content: provider + repository + revision + file path. Two findings share a Content Identity when they reference the same file at the same commit. The tool fetches once per unique Content Identity.
 _Avoid_: Fetch key, cache key
 
+### Fetching & Rate Limiting
+
+**Token Pool**:
+A round-robin set of GitHub PAT tokens used for API requests, with per-token tracking of remaining quota and reset time derived from response headers.
+_Avoid_: Token manager, credential store, auth pool
+
+**Deferred Work Item**:
+A File Work Item whose fetch was blocked by a GitHub rate limit. Held aside while other providers' items continue, then retried after the rate-limit window resets.
+_Avoid_: Retry item, queued item, backlog item
+
 ### Analysis
 
 **Flow**:

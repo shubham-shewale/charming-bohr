@@ -16,13 +16,14 @@ describe("End-to-End Hybrid Pipeline Integration Test", () => {
     anthropicModel: "claude-3-haiku-20240307",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 5,
-    githubPat: "test-github-pat",
+    githubPats: ["test-github-pat"],
     concurrency: 2,
     maxFileSizeKb: 500,
     surroundingLines: 2,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   beforeEach(() => {

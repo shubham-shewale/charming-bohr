@@ -17,13 +17,14 @@ describe("ClaudeAnalyzer", () => {
     anthropicModel: "claude-3-haiku-20240307",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 5,
-    githubPat: "test-pat",
+    githubPats: ["test-pat"],
     concurrency: 2,
     maxFileSizeKb: 500,
     surroundingLines: 2,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   beforeEach(() => {

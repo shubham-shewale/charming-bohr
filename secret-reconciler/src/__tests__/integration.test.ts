@@ -23,13 +23,14 @@ describe("End-to-End TruffleHog Pipeline Integration Test", () => {
     anthropicModel: "claude-3-5-sonnet",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 3,
-    githubPat: "dummy-github-pat",
+    githubPats: ["dummy-github-pat"],
     concurrency: 2,
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   it("processes CSV through mock fetcher and mock TruffleHog runner to output CSV", async () => {
@@ -169,6 +170,7 @@ const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // line 15
     const timeoutConfig: AppConfig = {
       ...mockConfig,
       trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
     };
 
     const summary = await runPipeline([inputCsvPath], {

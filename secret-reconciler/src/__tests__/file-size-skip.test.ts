@@ -24,13 +24,14 @@ describe("File-Size Limit Skip Integration Test", () => {
     anthropicModel: "claude-3-5-sonnet",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 3,
-    githubPat: "dummy-github-pat",
+    githubPats: ["dummy-github-pat"],
     concurrency: 2,
     maxFileSizeKb: 10, // 10 KB limit for testing
     surroundingLines: 5,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   it("marks all findings for a file exceeding MAX_FILE_SIZE_KB as status=skipped with error and skips analysis", async () => {

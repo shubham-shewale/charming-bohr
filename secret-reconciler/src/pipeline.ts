@@ -10,10 +10,13 @@ import {
 } from "./csv/reader.js";
 import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
+import { GitHubRateLimitError } from "./providers/github-provider.js";
+import { TokenPool } from "./providers/token-pool.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
 import { runTruffleHog, type RunTruffleHogOptions } from "./trufflehog/runner.js";
 import {
   type CanonicalSource,
+  type FileWorkItem,
   type FindingRef,
   type FindingResult,
 } from "./types.js";
@@ -44,6 +47,8 @@ export interface PipelineOptions {
   onProgress?: (progress: PipelineProgress) => void;
   signal?: AbortSignal;
   sigintTimeoutMs?: number;
+  /** Override sleep function for testing. Defaults to setTimeout-based sleep. */
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 export interface PipelineSummary {
@@ -96,6 +101,108 @@ async function scanWithTruffleHog(
 }
 
 /**
+ * Runs one pass of the p-limit executor over the given work items.
+ * Returns items that were deferred due to GitHub rate limiting.
+ */
+async function runPass(
+  workItems: FileWorkItem[],
+  {
+    limit,
+    isAborted,
+    tokenPool,
+    fetcher,
+    config,
+    claudeAnalyzer,
+    trufflehogOptions,
+    processedResultsMap,
+    onFileDone,
+  }: {
+    limit: ReturnType<typeof pLimit>;
+    isAborted: () => boolean;
+    tokenPool: TokenPool;
+    fetcher: FileFetcher;
+    config: AppConfig;
+    claudeAnalyzer: ClaudeAnalyzer;
+    trufflehogOptions: RunTruffleHogOptions;
+    processedResultsMap: Map<FindingRef, FindingResult>;
+    onFileDone: (results: FindingResult[]) => void;
+  }
+): Promise<FileWorkItem[]> {
+  const deferred: FileWorkItem[] = [];
+
+  const executors = workItems.map((workItem) => {
+    return async () => {
+      if (isAborted()) return;
+
+      // ── isBlocked pre-check: defer immediately without a network call ─────
+      if (workItem.provider === "github" && tokenPool.isBlocked) {
+        deferred.push(workItem);
+        return;
+      }
+
+      try {
+        const sampleSource = workItem.findings[0]!.canonicalSource!;
+        const localFilePath = await fetcher.fetchFile(sampleSource);
+
+        // Check file size against MAX_FILE_SIZE_KB
+        const stats = fs.statSync(localFilePath);
+        const maxBytes = config.maxFileSizeKb * 1024;
+        let results: FindingResult[];
+
+        if (stats.size > maxBytes) {
+          const sizeKb = (stats.size / 1024).toFixed(1);
+          const errMsg = `File size (${sizeKb} KB) exceeds MAX_FILE_SIZE_KB limit of ${config.maxFileSizeKb} KB`;
+          results = workItem.findings.map((finding) => ({
+            findingRef: finding,
+            status: "skipped" as const,
+            error: errMsg,
+          }));
+        } else if (config.flow === "llm-only") {
+          results = await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
+        } else if (config.flow === "trufflehog-only") {
+          results = await scanWithTruffleHog(
+            localFilePath,
+            workItem.findings,
+            trufflehogOptions
+          );
+        } else if (config.flow === "hybrid") {
+          results = await executeHybridFlow(workItem, localFilePath, {
+            claudeAnalyzer,
+            trufflehogOptions,
+          });
+        } else {
+          throw new Error(`Flow "${config.flow}" is not supported yet.`);
+        }
+
+        onFileDone(results);
+        for (const res of results) {
+          processedResultsMap.set(res.findingRef, res);
+        }
+      } catch (err: unknown) {
+        if (err instanceof GitHubRateLimitError) {
+          // Rate-limit hit mid-fetch: defer this item for the next pass
+          // (Token usage and reset time have already been recorded by FileFetcher)
+          deferred.push(workItem);
+          return;
+        }
+
+        if (!isAborted()) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
+          onFileDone(errResults);
+          for (const res of errResults) {
+            processedResultsMap.set(res.findingRef, res);
+          }
+        }
+      }
+    };
+  });
+
+  await Promise.all(executors.map((execute) => limit(execute)));
+  return deferred;
+}
+
+/**
  * Runs the end-to-end secret reconciliation pipeline.
  */
 export async function runPipeline(
@@ -118,9 +225,10 @@ export async function runPipeline(
     outputPath = generateDefaultOutputFilename();
   }
 
-  // Initialize file fetcher and cost tracker
+  // Initialize TokenPool and FileFetcher
+  const tokenPool = new TokenPool(config.githubPats);
   const fetcher = new FileFetcher({
-    githubPat: config.githubPat,
+    tokenPool,
     azureDevOpsPat: config.azureDevOpsPat,
     fetchProvider: options.fetchProvider,
   });
@@ -131,6 +239,9 @@ export async function runPipeline(
     anthropicClient: options.anthropicClient,
     costTracker,
   });
+
+  // Sleep function (overridable for testing)
+  const sleepFn = options.sleepFn ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
   // Read all source CSV files
   const allFindings: FindingRef[] = [];
@@ -181,75 +292,37 @@ export async function runPipeline(
     }
   };
 
+  const onFileDone = (results: FindingResult[]) => {
+    for (const res of results) {
+      if (res.status === "completed") findingsCompleted++;
+    }
+    filesProcessed++;
+    reportProgress();
+  };
+
   // Initial progress notification
   reportProgress();
 
-  const workItemExecutors = Array.from(workMap.values()).map((workItem) => {
-    return async () => {
-      if (isAborted) {
-        return;
-      }
+  // ── Main pass + defer-and-revisit loop ────────────────────────────────────
 
-      try {
-        const sampleSource = workItem.findings[0]!.canonicalSource!;
-        const localFilePath = await fetcher.fetchFile(sampleSource);
+  const passArgs = {
+    limit,
+    isAborted: () => isAborted,
+    tokenPool,
+    fetcher,
+    config,
+    claudeAnalyzer,
+    trufflehogOptions,
+    processedResultsMap,
+    onFileDone,
+  };
 
-        // Check file size against MAX_FILE_SIZE_KB
-        const stats = fs.statSync(localFilePath);
-        const maxBytes = config.maxFileSizeKb * 1024;
-        let results: FindingResult[];
+  let pendingItems = Array.from(workMap.values());
+  let deferredItems: FileWorkItem[] = [];
 
-        if (stats.size > maxBytes) {
-          const sizeKb = (stats.size / 1024).toFixed(1);
-          const errMsg = `File size (${sizeKb} KB) exceeds MAX_FILE_SIZE_KB limit of ${config.maxFileSizeKb} KB`;
-          results = workItem.findings.map((finding) => ({
-            findingRef: finding,
-            status: "skipped" as const,
-            error: errMsg,
-          }));
-        } else if (config.flow === "llm-only") {
-          results = await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
-        } else if (config.flow === "trufflehog-only") {
-          results = await scanWithTruffleHog(
-            localFilePath,
-            workItem.findings,
-            trufflehogOptions
-          );
-        } else if (config.flow === "hybrid") {
-          results = await executeHybridFlow(workItem, localFilePath, {
-            claudeAnalyzer,
-            trufflehogOptions,
-          });
-        } else {
-          throw new Error(`Flow "${config.flow}" is not supported yet.`);
-        }
-
-        for (const res of results) {
-          processedResultsMap.set(res.findingRef, res);
-          if (res.status === "completed") {
-            findingsCompleted++;
-          }
-        }
-        filesProcessed++;
-        reportProgress();
-      } catch (err: unknown) {
-        if (!isAborted) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
-          for (const res of errResults) {
-            processedResultsMap.set(res.findingRef, res);
-          }
-          filesProcessed++;
-          reportProgress();
-        }
-      }
-    };
-  });
-
-  const executionPromise = Promise.all(workItemExecutors.map((execute) => limit(execute)));
-
+  // Handle abort signal for the first pass
   if (options.signal) {
-    const abortTriggeredPromise = new Promise<void>((resolve) => {
+    const abortPromise = new Promise<void>((resolve) => {
       if (options.signal!.aborted) {
         resolve();
       } else {
@@ -257,19 +330,54 @@ export async function runPipeline(
       }
     });
 
+    const firstPassPromise = runPass(pendingItems, passArgs);
+
     await Promise.race([
-      executionPromise,
-      abortTriggeredPromise.then(async () => {
+      firstPassPromise.then((d) => { deferredItems = d; }),
+      abortPromise.then(async () => {
         isAborted = true;
-        // Wait up to timeoutMs for in-flight work items to finish
         await Promise.race([
-          executionPromise,
+          firstPassPromise,
           new Promise((r) => setTimeout(r, timeoutMs)),
         ]);
       }),
     ]);
   } else {
-    await executionPromise;
+    deferredItems = await runPass(pendingItems, passArgs);
+  }
+
+  // Retry passes for deferred GitHub items
+  const maxRetries = config.githubRateLimitMaxRetries;
+  let retryPass = 0;
+
+  while (deferredItems.length > 0 && retryPass < maxRetries && !isAborted) {
+    const earliestReset = tokenPool.getEarliestReset();
+    const nowSeconds = Date.now() / 1000;
+    const sleepSeconds = Math.max(0, earliestReset - nowSeconds + 1);
+    const resetTime = new Date(earliestReset * 1000).toISOString();
+
+    console.log(
+      `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
+    );
+    console.log(`Sleeping ${Math.ceil(sleepSeconds)}s until GitHub rate limit resets...`);
+
+    await sleepFn(sleepSeconds * 1000);
+    tokenPool.resetBlockedState();
+
+    retryPass++;
+    const retryBatch = deferredItems;
+    deferredItems = await runPass(retryBatch, passArgs);
+  }
+
+  // Any items still deferred after all retries are marked failed
+  if (deferredItems.length > 0) {
+    const errMsg = `GitHub rate limit exceeded after ${maxRetries} retr${maxRetries === 1 ? "y" : "ies"}`;
+    for (const workItem of deferredItems) {
+      const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
+      for (const res of errResults) {
+        processedResultsMap.set(res.findingRef, res);
+      }
+    }
   }
 
   // Build final results array

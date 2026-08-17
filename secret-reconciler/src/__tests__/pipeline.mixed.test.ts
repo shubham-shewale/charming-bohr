@@ -52,6 +52,7 @@ describe("Mixed Pipeline Support (GitHub + Azure DevOps)", () => {
           ok: true,
           status: 200,
           statusText: "OK",
+          headers: { get: (_name: string) => null }, // No rate-limit headers — treated as Infinity remaining
           text: async () => "github file content line 1\ngithub file content line 2\n",
         } as unknown as Response;
       } else if (url.includes("dev.azure.com")) {

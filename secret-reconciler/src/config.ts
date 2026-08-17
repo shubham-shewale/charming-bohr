@@ -86,7 +86,11 @@ const configSchema = z.object({
   ANTHROPIC_MODEL: z.string().min(1, "ANTHROPIC_MODEL must not be empty."),
   MAX_TOKENS_PER_REQUEST: rangedIntString(1),
   MAX_LLM_CALLS_PER_FILE: rangedIntString(1),
-  GITHUB_PAT: z.string().min(1, "GITHUB_PAT must not be empty."),
+  GITHUB_PAT: z
+    .string()
+    .min(1, "GITHUB_PAT must not be empty.")
+    .transform((val) => val.split(",").map((t) => t.trim()).filter(Boolean)),
+  GITHUB_RATE_LIMIT_MAX_RETRIES: optionalRangedIntString(0, 2),
   AZURE_DEVOPS_PAT: optionalTrimmedString,
   CONCURRENCY: rangedIntString(1),
   MAX_FILE_SIZE_KB: rangedIntString(1),
@@ -119,7 +123,8 @@ export interface AppConfig {
   anthropicModel: string;
   maxTokensPerRequest: number;
   maxLlmCallsPerFile: number;
-  githubPat: string;
+  /** One or more GitHub PATs parsed from the comma-separated GITHUB_PAT env var. */
+  githubPats: string[];
   azureDevOpsPat?: string;
   concurrency: number;
   maxFileSizeKb: number;
@@ -128,6 +133,8 @@ export interface AppConfig {
   trufflehogVerificationMode: TruffleHogVerificationMode;
   trufflehogTimeoutSeconds: number;
   trufflehogUserAgentSuffix?: string;
+  /** Maximum number of defer-and-retry passes when the GitHub rate limit is hit. Default 2. */
+  githubRateLimitMaxRetries: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +171,7 @@ export function loadConfig(): AppConfig {
     anthropicModel: env.ANTHROPIC_MODEL,
     maxTokensPerRequest: env.MAX_TOKENS_PER_REQUEST,
     maxLlmCallsPerFile: env.MAX_LLM_CALLS_PER_FILE,
-    githubPat: env.GITHUB_PAT,
+    githubPats: env.GITHUB_PAT,
     azureDevOpsPat: env.AZURE_DEVOPS_PAT,
     concurrency: env.CONCURRENCY,
     maxFileSizeKb: env.MAX_FILE_SIZE_KB,
@@ -173,6 +180,7 @@ export function loadConfig(): AppConfig {
     trufflehogVerificationMode: env.TRUFFLEHOG_VERIFICATION_MODE,
     trufflehogTimeoutSeconds: env.TRUFFLEHOG_TIMEOUT_SECONDS,
     trufflehogUserAgentSuffix: env.TRUFFLEHOG_USER_AGENT_SUFFIX,
+    githubRateLimitMaxRetries: env.GITHUB_RATE_LIMIT_MAX_RETRIES,
   };
 }
 

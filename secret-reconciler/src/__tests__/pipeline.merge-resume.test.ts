@@ -23,13 +23,14 @@ describe("Two-CSV Merge and Resume Integration Tests", () => {
     anthropicModel: "claude-3-5-sonnet",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 3,
-    githubPat: "dummy-github-pat",
+    githubPats: ["dummy-github-pat"],
     concurrency: 2,
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   it("merges two CSVs with different columns into one output, tagging source_file and unioning headers", async () => {

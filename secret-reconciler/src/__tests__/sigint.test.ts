@@ -24,13 +24,14 @@ describe("SIGINT & Graceful Cancellation Integration Tests", () => {
     anthropicModel: "claude-3-5-sonnet",
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 3,
-    githubPat: "dummy-github-pat",
+    githubPats: ["dummy-github-pat"],
     concurrency: 1, // Concurrency 1 so files execute sequentially
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
     trufflehogVerificationMode: "all",
     trufflehogTimeoutSeconds: 60,
+    githubRateLimitMaxRetries: 2,
   };
 
   it("handles abort signal: stops accepting new work, flushes completed and pending results to CSV without corruption", async () => {
