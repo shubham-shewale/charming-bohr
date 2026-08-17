@@ -98,6 +98,7 @@ rule-2,https://github.com/my-org/my-repo/blob/${sha}/src/file2.js#L1-L5,medium
     const summary = await runPipeline([inputCsvPath], {
       config: { ...baseConfig, flow: "llm-only" },
       output: outputCsvPath,
+      tempDir: path.join(tmpDir, "temp_files"),
       anthropicClient: mockAnthropicClient as any,
       fetchProvider: async () => "content",
       onProgress: (p) => {
