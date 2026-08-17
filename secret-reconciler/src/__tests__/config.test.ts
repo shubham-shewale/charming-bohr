@@ -95,12 +95,20 @@ describe("loadConfig — valid configuration", () => {
   it("treats AZURE_DEVOPS_PAT as optional — succeeds when absent", () => {
     withEnv({});
     delete process.env["AZURE_DEVOPS_PAT"];
-    expect(() => loadConfig()).not.toThrow();
+    const config = loadConfig();
+    expect(config.azureDevOpsPat).toBeUndefined();
   });
 
-  it("accepts AZURE_DEVOPS_PAT when present", () => {
-    withEnv({ AZURE_DEVOPS_PAT: "ado-token" });
-    process.env["AZURE_DEVOPS_PAT"] = "ado-token";
+  it("normalizes empty or whitespace AZURE_DEVOPS_PAT to undefined", () => {
+    withEnv({ AZURE_DEVOPS_PAT: "" });
+    expect(loadConfig().azureDevOpsPat).toBeUndefined();
+
+    withEnv({ AZURE_DEVOPS_PAT: "   " });
+    expect(loadConfig().azureDevOpsPat).toBeUndefined();
+  });
+
+  it("accepts and trims AZURE_DEVOPS_PAT when present", () => {
+    withEnv({ AZURE_DEVOPS_PAT: "  ado-token  " });
     const config = loadConfig();
     expect(config.azureDevOpsPat).toBe("ado-token");
   });

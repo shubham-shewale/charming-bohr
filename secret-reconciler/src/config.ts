@@ -54,7 +54,13 @@ const configSchema = z.object({
   MAX_TOKENS_PER_REQUEST: rangedIntString(1),
   MAX_LLM_CALLS_PER_FILE: rangedIntString(1),
   GITHUB_PAT: z.string().min(1, "GITHUB_PAT must not be empty."),
-  AZURE_DEVOPS_PAT: z.string().optional(),
+  AZURE_DEVOPS_PAT: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val || val.trim().length === 0) return undefined;
+      return val.trim();
+    }),
   CONCURRENCY: rangedIntString(1),
   MAX_FILE_SIZE_KB: rangedIntString(1),
   SURROUNDING_LINES: rangedIntString(0),
