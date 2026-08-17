@@ -19,13 +19,6 @@ describe("TokenPool", () => {
     expect(pool.getToken()).toBe("tok-a"); // wraps around
   });
 
-  it("getTokenWithIndex returns token and original index", () => {
-    const pool = new TokenPool(["tok-a", "tok-b"]);
-    expect(pool.getTokenWithIndex()).toEqual({ token: "tok-a", index: 0 });
-    expect(pool.getTokenWithIndex()).toEqual({ token: "tok-b", index: 1 });
-    expect(pool.getTokenWithIndex()).toEqual({ token: "tok-a", index: 0 });
-  });
-
   // ── isBlocked ──────────────────────────────────────────────────────────────
 
   it("isBlocked is false initially (remaining = Infinity)", () => {
@@ -58,12 +51,21 @@ describe("TokenPool", () => {
 
   // ── getEarliestReset ───────────────────────────────────────────────────────
 
-  it("getEarliestReset returns the minimum resetAt across tokens", () => {
+  it("getEarliestReset returns the minimum future resetAt for exhausted tokens", () => {
+    const now = Math.floor(Date.now() / 1000);
     const pool = new TokenPool(["tok-a", "tok-b", "tok-c"]);
-    pool.reportUsage("tok-a", 0, 2000);
-    pool.reportUsage("tok-b", 0, 1000); // earliest
-    pool.reportUsage("tok-c", 0, 3000);
-    expect(pool.getEarliestReset()).toBe(1000);
+    pool.reportUsage("tok-a", 0, now + 2000);
+    pool.reportUsage("tok-b", 0, now + 1000); // earliest future reset
+    pool.reportUsage("tok-c", 0, now + 3000);
+    expect(pool.getEarliestReset()).toBe(now + 1000);
+  });
+
+  it("getEarliestReset ignores expired resets when future resets exist", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const pool = new TokenPool(["tok-a", "tok-b"]);
+    pool.reportUsage("tok-a", 0, now - 500); // expired reset
+    pool.reportUsage("tok-b", 0, now + 1800); // active future reset
+    expect(pool.getEarliestReset()).toBe(now + 1800);
   });
 
   it("getEarliestReset returns 0 when no usage has been reported", () => {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { FileFetcher } from "../fetcher/file-fetcher.js";
+import { FileFetcher, getLocalCachePath } from "../fetcher/file-fetcher.js";
 import { fetchGitHubFile, GitHubRateLimitError } from "../providers/github-provider.js";
 import { TokenPool } from "../providers/token-pool.js";
 import { getContentIdentity } from "../csv/reader.js";
@@ -85,14 +85,7 @@ describe("FileFetcher & GitHub Provider", () => {
     let callCount = 0;
 
     // Pre-create the expected file at the hash-based path (simulating a prior run)
-    const contentIdentity = getContentIdentity(sampleSource);
-    const fileHash = crypto
-      .createHash("sha256")
-      .update(contentIdentity)
-      .digest("hex")
-      .slice(0, 12);
-    const safeBasename = path.basename(sampleSource.filePath).replace(/[^a-zA-Z0-9._-]/g, "_");
-    const cachedPath = path.join(testTmpDir, `${fileHash}_${safeBasename}`);
+    const cachedPath = getLocalCachePath(testTmpDir, sampleSource);
     fs.writeFileSync(cachedPath, "cached content from prior run", "utf-8");
 
     const fetcher = new FileFetcher({

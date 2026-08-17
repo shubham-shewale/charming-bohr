@@ -82,6 +82,7 @@ const DUMMY_API_KEY = "test_key_mock_12345";
     const summary = await runPipeline([inputCsv], {
       config: mockConfig,
       output: outputCsv,
+      tempDir: path.join(tmpDir, "temp_files"),
       fetchProvider: mockFetchProvider,
       anthropicClient: mockAnthropicClient,
       trufflehogExecFn: mockTruffleHogExec,
@@ -171,6 +172,7 @@ const TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"; // line 12
     const summary = await runPipeline([inputCsv], {
       config: mockConfig,
       output: outputCsv,
+      tempDir: path.join(tmpDir, "temp_files"),
       fetchProvider: mockFetchProvider,
       anthropicClient: mockAnthropicClient,
       trufflehogExecFn: mockTruffleHogExec,
@@ -280,6 +282,7 @@ const MAL = "some-key"; // 62
     const summary = await runPipeline([inputCsv], {
       config: mockConfig,
       output: outputCsv,
+      tempDir: path.join(tmpDir, "temp_files"),
       fetchProvider: mockFetchProvider,
       anthropicClient: mockAnthropicClient,
       trufflehogExecFn: mockTruffleHogExec,
@@ -438,6 +441,7 @@ rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15
     const summary = await runPipeline([inputCsv], {
       config: mockConfig,
       output: outputCsv,
+      tempDir: path.join(tmpDir, "temp_files"),
       fetchProvider: mockFetchProvider,
       anthropicClient: mockAnthropicClient,
       trufflehogExecFn: mockTruffleHogExec,
@@ -520,6 +524,7 @@ rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15
     const summary = await runPipeline([inputCsv], {
       config: hybridThConfig,
       output: outputCsv,
+      tempDir: path.join(tmpDir, "temp_files"),
       fetchProvider: mockFetchProvider,
       anthropicClient: mockAnthropicClient,
       trufflehogExecFn: mockTruffleHogExec,

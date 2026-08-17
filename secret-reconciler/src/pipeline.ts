@@ -47,6 +47,8 @@ export interface PipelineOptions {
   onProgress?: (progress: PipelineProgress) => void;
   signal?: AbortSignal;
   sigintTimeoutMs?: number;
+  /** Directory to store fetched files in. Defaults to `tmp/` in current working directory. */
+  tempDir?: string;
   /** Override sleep function for testing. Defaults to setTimeout-based sleep. */
   sleepFn?: (ms: number) => Promise<void>;
 }
@@ -230,6 +232,7 @@ export async function runPipeline(
   const fetcher = new FileFetcher({
     tokenPool,
     azureDevOpsPat: config.azureDevOpsPat,
+    tempDir: options.tempDir,
     fetchProvider: options.fetchProvider,
   });
 
@@ -346,27 +349,37 @@ export async function runPipeline(
     deferredItems = await runPass(pendingItems, passArgs);
   }
 
-  // Retry passes for deferred GitHub items
+  // Defer-and-revisit loop for deferred GitHub items
   const maxRetries = config.githubRateLimitMaxRetries;
   let retryPass = 0;
+
+  if (deferredItems.length > 0) {
+    const earliestReset = tokenPool.getEarliestReset();
+    const resetTime = earliestReset > 0 ? new Date(earliestReset * 1000).toISOString() : "unknown";
+    console.log(
+      `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
+    );
+  }
 
   while (deferredItems.length > 0 && retryPass < maxRetries && !isAborted) {
     const earliestReset = tokenPool.getEarliestReset();
     const nowSeconds = Date.now() / 1000;
     const sleepSeconds = Math.max(0, earliestReset - nowSeconds + 1);
-    const resetTime = new Date(earliestReset * 1000).toISOString();
+    const resetTime = earliestReset > 0 ? new Date(earliestReset * 1000).toISOString() : "unknown";
 
-    console.log(
-      `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
-    );
+    if (retryPass > 0) {
+      console.log(
+        `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
+      );
+    }
     console.log(`Sleeping ${Math.ceil(sleepSeconds)}s until GitHub rate limit resets...`);
 
     await sleepFn(sleepSeconds * 1000);
     tokenPool.resetBlockedState();
 
     retryPass++;
-    const retryBatch = deferredItems;
-    deferredItems = await runPass(retryBatch, passArgs);
+    const deferredBatch = deferredItems;
+    deferredItems = await runPass(deferredBatch, passArgs);
   }
 
   // Any items still deferred after all retries are marked failed

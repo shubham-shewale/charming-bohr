@@ -89,7 +89,20 @@ const configSchema = z.object({
   GITHUB_PAT: z
     .string()
     .min(1, "GITHUB_PAT must not be empty.")
-    .transform((val) => val.split(",").map((t) => t.trim()).filter(Boolean)),
+    .transform((val, ctx) => {
+      const tokens = val
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (tokens.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "GITHUB_PAT must contain at least one non-empty token.",
+        });
+        return z.NEVER;
+      }
+      return tokens;
+    }),
   GITHUB_RATE_LIMIT_MAX_RETRIES: optionalRangedIntString(0, 2),
   AZURE_DEVOPS_PAT: optionalTrimmedString,
   CONCURRENCY: rangedIntString(1),

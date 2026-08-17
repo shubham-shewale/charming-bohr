@@ -285,6 +285,14 @@ describe("loadConfig — invalid configuration", () => {
     expect(() => loadConfig()).toThrow(/FLOW/);
   });
 
+  it("throws when GITHUB_PAT contains only commas or empty items", () => {
+    withEnv({ GITHUB_PAT: "," });
+    expect(() => loadConfig()).toThrow(/GITHUB_PAT/);
+
+    withEnv({ GITHUB_PAT: "  ,   ,  " });
+    expect(() => loadConfig()).toThrow(/GITHUB_PAT/);
+  });
+
   it("error message names ALL invalid fields, not just the first", () => {
     // Blow up multiple fields at once — should report all of them
     withEnv({ FLOW: "bad", CONCURRENCY: "-1", GITHUB_PAT: undefined });

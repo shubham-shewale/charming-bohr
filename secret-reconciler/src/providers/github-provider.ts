@@ -61,15 +61,21 @@ export async function fetchGitHubFile(
   });
 
   // Parse rate-limit headers from every response (success or error)
-  const rateLimitRemaining = parseInt(response.headers.get("X-RateLimit-Remaining") ?? "Infinity", 10);
-  const rateLimitReset = parseInt(response.headers.get("X-RateLimit-Reset") ?? "0", 10);
+  const remainingHeader = response.headers.get("X-RateLimit-Remaining");
+  const parsedRemaining = remainingHeader !== null ? parseInt(remainingHeader, 10) : NaN;
+  const rateLimitRemaining = Number.isNaN(parsedRemaining) ? Infinity : parsedRemaining;
+
+  const resetHeader = response.headers.get("X-RateLimit-Reset");
+  const parsedReset = resetHeader !== null ? parseInt(resetHeader, 10) : NaN;
+  const rateLimitReset = Number.isNaN(parsedReset) ? 0 : parsedReset;
 
   if (response.status === 403 || response.status === 429) {
     // Compute resetAt: prefer X-RateLimit-Reset, fall back to Retry-After
     let resetAt = rateLimitReset;
     if (!resetAt) {
-      const retryAfter = parseInt(response.headers.get("Retry-After") ?? "0", 10);
-      resetAt = Math.floor(Date.now() / 1000) + (retryAfter || 3600);
+      const retryAfterStr = response.headers.get("Retry-After");
+      const retryAfter = retryAfterStr !== null ? parseInt(retryAfterStr, 10) : NaN;
+      resetAt = Math.floor(Date.now() / 1000) + (!Number.isNaN(retryAfter) && retryAfter > 0 ? retryAfter : 3600);
     }
     throw new GitHubRateLimitError(resetAt, tokenIndex);
   }

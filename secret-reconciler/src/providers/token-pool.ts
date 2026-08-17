@@ -7,7 +7,6 @@
 
 interface TokenSlot {
   token: string;
-  index: number;
   /** How many requests remain in the current rate-limit window. Starts at Infinity. */
   remaining: number;
   /** UTC epoch seconds when the rate-limit window resets. Starts at 0. */
@@ -22,7 +21,7 @@ export class TokenPool {
     if (tokens.length === 0) {
       throw new Error("TokenPool requires at least one token.");
     }
-    this.slots = tokens.map((token, index) => ({ token, index, remaining: Infinity, resetAt: 0 }));
+    this.slots = tokens.map((token) => ({ token, remaining: Infinity, resetAt: 0 }));
   }
 
   /**
@@ -32,15 +31,6 @@ export class TokenPool {
     const slot = this.slots[this.currentIndex % this.slots.length]!;
     this.currentIndex = (this.currentIndex + 1) % this.slots.length;
     return slot.token;
-  }
-
-  /**
-   * Returns the next token string and its index via round-robin.
-   */
-  getTokenWithIndex(): { token: string; index: number } {
-    const slot = this.slots[this.currentIndex % this.slots.length]!;
-    this.currentIndex = (this.currentIndex + 1) % this.slots.length;
-    return { token: slot.token, index: slot.index };
   }
 
   /**
@@ -65,11 +55,19 @@ export class TokenPool {
 
   /**
    * Returns the UTC epoch seconds of the soonest token reset, or 0 if no usage has been reported.
+   * For rate-limited tokens, prioritizes the soonest reset in the future.
    */
   getEarliestReset(): number {
-    const resets = this.slots.map((s) => s.resetAt).filter((r) => r > 0);
-    if (resets.length === 0) return 0;
-    return Math.min(...resets);
+    const nowSeconds = Date.now() / 1000;
+    const activeFutureResets = this.slots
+      .filter((s) => s.remaining === 0 && s.resetAt > nowSeconds)
+      .map((s) => s.resetAt);
+    if (activeFutureResets.length > 0) {
+      return Math.min(...activeFutureResets);
+    }
+    const allResets = this.slots.map((s) => s.resetAt).filter((r) => r > 0);
+    if (allResets.length === 0) return 0;
+    return Math.min(...allResets);
   }
 
   /**

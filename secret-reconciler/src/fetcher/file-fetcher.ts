@@ -16,6 +16,21 @@ export interface FileFetcherOptions {
 }
 
 /**
+ * Computes the deterministic local path for a given CanonicalSource in the target temp directory.
+ * Content identity includes provider, repository, revision, and file path.
+ */
+export function getLocalCachePath(tempDir: string, source: CanonicalSource): string {
+  const contentIdentity = getContentIdentity(source);
+  const fileHash = crypto
+    .createHash("sha256")
+    .update(contentIdentity)
+    .digest("hex")
+    .slice(0, 12);
+  const safeBasename = path.basename(source.filePath).replace(/[^a-zA-Z0-9._-]/g, "_");
+  return path.join(tempDir, `${fileHash}_${safeBasename}`);
+}
+
+/**
  * FileFetcher manages downloading remote raw files, storing them in a shared local `tmp/`
  * directory, and caching in-flight requests to deduplicate concurrent fetches for identical
  * Content Identities.
@@ -47,14 +62,7 @@ export class FileFetcher {
    * Used for both cross-run cache checks and writing new files.
    */
   private localPath(source: CanonicalSource): string {
-    const contentIdentity = getContentIdentity(source);
-    const fileHash = crypto
-      .createHash("sha256")
-      .update(contentIdentity)
-      .digest("hex")
-      .slice(0, 12);
-    const safeBasename = path.basename(source.filePath).replace(/[^a-zA-Z0-9._-]/g, "_");
-    return path.join(this.tempDir, `${fileHash}_${safeBasename}`);
+    return getLocalCachePath(this.tempDir, source);
   }
 
   /**
@@ -83,28 +91,24 @@ export class FileFetcher {
     const promise = (async () => {
       try {
         let content = "";
-        if (this.fetchProvider) {
+        if (source.provider === "github") {
+          const token = this.tokenPool.getToken();
           try {
-            content = await this.fetchProvider(source);
-          } catch (err) {
-            if (err instanceof GitHubRateLimitError && source.provider === "github") {
-              const { token } = this.tokenPool.getTokenWithIndex();
-              this.tokenPool.reportUsage(token, 0, err.resetAt);
+            if (this.fetchProvider) {
+              content = await this.fetchProvider(source);
+            } else {
+              const result = await fetchGitHubFile(source, token);
+              this.tokenPool.reportUsage(token, result.rateLimitRemaining, result.rateLimitReset);
+              content = result.content;
             }
-            throw err;
-          }
-        } else if (source.provider === "github") {
-          const { token, index } = this.tokenPool.getTokenWithIndex();
-          try {
-            const result = await fetchGitHubFile(source, token, index);
-            this.tokenPool.reportUsage(token, result.rateLimitRemaining, result.rateLimitReset);
-            content = result.content;
           } catch (err) {
             if (err instanceof GitHubRateLimitError) {
               this.tokenPool.reportUsage(token, 0, err.resetAt);
             }
             throw err;
           }
+        } else if (this.fetchProvider) {
+          content = await this.fetchProvider(source);
         } else if (source.provider === "azure") {
           if (!this.azureDevOpsPat) {
             throw new Error("Missing AZURE_DEVOPS_PAT for Azure DevOps source");
@@ -153,6 +157,3 @@ export class FileFetcher {
     }
   }
 }
-
-// Re-export for convenience so pipeline.ts can import from one place
-export { GitHubRateLimitError };
