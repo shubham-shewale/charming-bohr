@@ -22,6 +22,8 @@ describe("ClaudeAnalyzer", () => {
     maxFileSizeKb: 500,
     surroundingLines: 2,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   beforeEach(() => {

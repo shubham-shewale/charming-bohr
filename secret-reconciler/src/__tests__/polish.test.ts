@@ -28,6 +28,8 @@ describe("Polish: Progress, Filename & Cleanup Tests", () => {
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   it("generateDefaultOutputFilename produces results-{YYYYMMDD}T{HHMM}.csv in cwd", () => {

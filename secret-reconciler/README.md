@@ -163,6 +163,9 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `MAX_LLM_CALLS_PER_FILE` | Integer | `3` | **Yes** (LLM/Hybrid) | Maximum LLM batch calls per file work item (>= 1). |
 | `GITHUB_PAT` | String | `ghp_...` | **Yes** | GitHub Personal Access Token. |
 | `AZURE_DEVOPS_PAT` | String | `...` | *Optional* | Azure DevOps Personal Access Token (required if Azure links exist). |
+| `TRUFFLEHOG_VERIFICATION_MODE` | Enum | `all` | *Optional* | Verification mode: `all` (default), `verified-only`, or `no-verification`. |
+| `TRUFFLEHOG_TIMEOUT_SECONDS` | Integer | `60` | *Optional* | Subprocess timeout for TruffleHog scans in seconds (>= 1, default `60`). |
+| `TRUFFLEHOG_USER_AGENT_SUFFIX` | String | `...` | *Optional* | Custom suffix appended to TruffleHog outgoing verification HTTP requests. |
 | `CONCURRENCY` | Integer | `5` | **Yes** | Number of file work items processed concurrently (>= 1). |
 | `MAX_FILE_SIZE_KB` | Integer | `500` | **Yes** | Maximum file size in KB to download and analyze (>= 1). |
 | `SURROUNDING_LINES` | Integer | `10` | **Yes** | Lines of code context included above and below each finding (>= 0). |
@@ -225,6 +228,23 @@ npm run dev -- ./reconciled-all.csv --retry-failed -o ./reconciled-all.csv
 Retain downloaded files in the operating system temp directory to inspect exact file content:
 ```bash
 npm run dev -- ./data/findings.csv --keep-files
+```
+
+#### 6. Offline Scanning (No Network Verification)
+Run fast offline scans without making live verification API calls to external third-party services:
+```bash
+# In .env:
+# TRUFFLEHOG_VERIFICATION_MODE=no-verification
+npm run dev -- ./data/findings.csv
+```
+
+#### 7. Audit Attribution & Timeout Control
+Attach a custom audit tracking string to TruffleHog verification requests and give slow scans extra time:
+```bash
+# In .env:
+# TRUFFLEHOG_USER_AGENT_SUFFIX=SecurityAuditTeam-2026
+# TRUFFLEHOG_TIMEOUT_SECONDS=120
+npm run dev -- ./data/findings.csv
 ```
 
 ---

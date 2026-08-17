@@ -29,6 +29,9 @@ beforeEach(() => {
     delete process.env[key];
   }
   delete process.env["AZURE_DEVOPS_PAT"];
+  delete process.env["TRUFFLEHOG_VERIFICATION_MODE"];
+  delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
+  delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
 });
 
 afterEach(() => {
@@ -36,6 +39,9 @@ afterEach(() => {
   for (const key of Object.keys(VALID_ENV)) {
     delete process.env[key];
   }
+  delete process.env["TRUFFLEHOG_VERIFICATION_MODE"];
+  delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
+  delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
   for (const [k, v] of Object.entries(originalEnv)) {
     if (v !== undefined) process.env[k] = v;
     else delete process.env[k];
@@ -112,6 +118,47 @@ describe("loadConfig — valid configuration", () => {
     const config = loadConfig();
     expect(config.azureDevOpsPat).toBe("ado-token");
   });
+
+  it("applies TruffleHog defaults when TruffleHog variables are absent", () => {
+    withEnv({});
+    const config = loadConfig();
+    expect(config.trufflehogVerificationMode).toBe("all");
+    expect(config.trufflehogTimeoutSeconds).toBe(60);
+    expect(config.trufflehogUserAgentSuffix).toBeUndefined();
+  });
+
+  it("parses valid TRUFFLEHOG_VERIFICATION_MODE values", () => {
+    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "verified-only" });
+    expect(loadConfig().trufflehogVerificationMode).toBe("verified-only");
+
+    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "no-verification" });
+    expect(loadConfig().trufflehogVerificationMode).toBe("no-verification");
+
+    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "all" });
+    expect(loadConfig().trufflehogVerificationMode).toBe("all");
+  });
+
+  it("parses valid TRUFFLEHOG_TIMEOUT_SECONDS integers", () => {
+    withEnv({ TRUFFLEHOG_TIMEOUT_SECONDS: "120" });
+    expect(loadConfig().trufflehogTimeoutSeconds).toBe(120);
+
+    withEnv({ TRUFFLEHOG_TIMEOUT_SECONDS: "1" });
+    expect(loadConfig().trufflehogTimeoutSeconds).toBe(1);
+  });
+
+  it("normalizes and trims TRUFFLEHOG_USER_AGENT_SUFFIX", () => {
+    withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "SecurityTeamAudit-2026" });
+    expect(loadConfig().trufflehogUserAgentSuffix).toBe("SecurityTeamAudit-2026");
+
+    withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "  CustomSuffix  " });
+    expect(loadConfig().trufflehogUserAgentSuffix).toBe("CustomSuffix");
+
+    withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "" });
+    expect(loadConfig().trufflehogUserAgentSuffix).toBeUndefined();
+
+    withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "   " });
+    expect(loadConfig().trufflehogUserAgentSuffix).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -142,6 +189,26 @@ describe("loadConfig — invalid configuration", () => {
       // Should mention the valid options
       expect(String(e)).toMatch(/trufflehog-only|llm-only|hybrid/);
     }
+  });
+
+  it("throws when TRUFFLEHOG_VERIFICATION_MODE is invalid", () => {
+    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "invalid-mode" });
+    expect(() => loadConfig()).toThrow(/TRUFFLEHOG_VERIFICATION_MODE/);
+  });
+
+  it("throws when TRUFFLEHOG_TIMEOUT_SECONDS is zero", () => {
+    withEnv({ TRUFFLEHOG_TIMEOUT_SECONDS: "0" });
+    expect(() => loadConfig()).toThrow(/TRUFFLEHOG_TIMEOUT_SECONDS/);
+  });
+
+  it("throws when TRUFFLEHOG_TIMEOUT_SECONDS is negative", () => {
+    withEnv({ TRUFFLEHOG_TIMEOUT_SECONDS: "-10" });
+    expect(() => loadConfig()).toThrow(/TRUFFLEHOG_TIMEOUT_SECONDS/);
+  });
+
+  it("throws when TRUFFLEHOG_TIMEOUT_SECONDS is not an integer", () => {
+    withEnv({ TRUFFLEHOG_TIMEOUT_SECONDS: "abc" });
+    expect(() => loadConfig()).toThrow(/TRUFFLEHOG_TIMEOUT_SECONDS/);
   });
 
   it("throws when CONCURRENCY is zero", () => {

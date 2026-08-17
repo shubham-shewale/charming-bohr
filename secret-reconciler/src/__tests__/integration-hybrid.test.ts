@@ -21,6 +21,8 @@ describe("End-to-End Hybrid Pipeline Integration Test", () => {
     maxFileSizeKb: 500,
     surroundingLines: 2,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   beforeEach(() => {
@@ -450,5 +452,89 @@ rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15
     expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
     expect(scannedFiles).toHaveLength(1);
     expect(scannedFiles[0]).toContain("secret-file.js");
+  });
+
+  it("propagates TruffleHog verification mode, user-agent suffix, and timeout in hybrid flow", async () => {
+    const inputCsv = path.join(tmpDir, "hybrid-th-config.csv");
+    const outputCsv = path.join(tmpDir, "hybrid-th-config-out.csv");
+
+    const sha = "1234567890abcdef1234567890abcdef12345678";
+    const csvContent = `Rule ID,SCM Link\nrule-uncertain,https://github.com/my-org/my-repo/blob/${sha}/src/auth.js#L10-L20\n`;
+    fs.writeFileSync(inputCsv, csvContent, "utf-8");
+
+    const mockFetchProvider = async () => "const token = 'xyz';";
+
+    const mockAnthropicClient: AnthropicClientLike = {
+      messages: {
+        create: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                classifications: [
+                  {
+                    findingIndex: 0,
+                    classification: "uncertain",
+                    confidence: 0.5,
+                    reason: "Need scanner verification",
+                  },
+                ],
+              }),
+            },
+          ],
+          usage: { input_tokens: 50, output_tokens: 20 },
+        }),
+      },
+    };
+
+    let capturedArgs: string[] = [];
+    let capturedOptions: { timeout?: number } = {};
+
+    const mockTruffleHogExec = vi.fn().mockImplementation(async (_cmd, args, opts) => {
+      capturedArgs = args;
+      capturedOptions = opts;
+      return {
+        stdout: JSON.stringify({
+          DetectorName: "AuthToken",
+          Verified: false,
+          SourceMetadata: {
+            Data: {
+              Filesystem: {
+                line: 10,
+              },
+            },
+          },
+        }),
+        stderr: "",
+      };
+    });
+
+    const hybridThConfig: AppConfig = {
+      ...mockConfig,
+      trufflehogVerificationMode: "no-verification",
+      trufflehogUserAgentSuffix: "SecurityTeamAudit-2026",
+      trufflehogTimeoutSeconds: 90,
+    };
+
+    const summary = await runPipeline([inputCsv], {
+      config: hybridThConfig,
+      output: outputCsv,
+      fetchProvider: mockFetchProvider,
+      anthropicClient: mockAnthropicClient,
+      trufflehogExecFn: mockTruffleHogExec,
+    });
+
+    expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
+    expect(capturedArgs[0]).toBe("filesystem");
+    expect(capturedArgs[1]).toBe("--file");
+    expect(capturedArgs[2]).toContain("auth.js");
+    expect(capturedArgs[3]).toBe("--json");
+    expect(capturedArgs[4]).toBe("--no-verification");
+    expect(capturedArgs[5]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
+    expect(capturedOptions.timeout).toBe(90000);
+
+    expect(summary.completed).toBe(1);
+    expect(summary.uncertain).toBe(1);
+    expect(summary.unverified).toBe(1);
   });
 });

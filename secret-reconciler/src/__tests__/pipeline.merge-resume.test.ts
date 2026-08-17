@@ -28,6 +28,8 @@ describe("Two-CSV Merge and Resume Integration Tests", () => {
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   it("merges two CSVs with different columns into one output, tagging source_file and unioning headers", async () => {

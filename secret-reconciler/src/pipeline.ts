@@ -89,9 +89,9 @@ export function generateDefaultOutputFilename(
 async function scanWithTruffleHog(
   localFilePath: string,
   findings: FindingRef[],
-  execFn?: RunTruffleHogOptions["execFn"]
+  trufflehogOptions?: RunTruffleHogOptions
 ): Promise<FindingResult[]> {
-  const detections = await runTruffleHog(localFilePath, { execFn });
+  const detections = await runTruffleHog(localFilePath, trufflehogOptions);
   return matchDetectionsToFindings(findings, detections);
 }
 
@@ -103,6 +103,14 @@ export async function runPipeline(
   options: PipelineOptions
 ): Promise<PipelineSummary> {
   const { config } = options;
+
+  // Assemble TruffleHog runner options
+  const trufflehogOptions: RunTruffleHogOptions = {
+    execFn: options.trufflehogExecFn,
+    verificationMode: config.trufflehogVerificationMode,
+    userAgentSuffix: config.trufflehogUserAgentSuffix,
+    timeoutMs: config.trufflehogTimeoutSeconds * 1000,
+  };
 
   // Determine output path
   let outputPath = options.output;
@@ -205,12 +213,12 @@ export async function runPipeline(
           results = await scanWithTruffleHog(
             localFilePath,
             workItem.findings,
-            options.trufflehogExecFn
+            trufflehogOptions
           );
         } else if (config.flow === "hybrid") {
           results = await executeHybridFlow(workItem, localFilePath, {
             claudeAnalyzer,
-            trufflehogExecFn: options.trufflehogExecFn,
+            trufflehogOptions,
           });
         } else {
           throw new Error(`Flow "${config.flow}" is not supported yet.`);

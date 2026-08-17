@@ -28,6 +28,8 @@ describe("End-to-End TruffleHog Pipeline Integration Test", () => {
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   it("processes CSV through mock fetcher and mock TruffleHog runner to output CSV", async () => {
@@ -101,5 +103,83 @@ const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // line 15
     expect(rows[2]["Rule ID"]).toBe("rule-bad");
     expect(rows[2]["status"]).toBe("skipped");
     expect(rows[2]["error"]).toContain('URL path does not contain "/blob/"');
+  });
+
+  it("passes custom verification mode, user-agent suffix, and timeout to TruffleHog in pipeline", async () => {
+    const inputCsvPath = path.join(tmpDir, "custom-findings.csv");
+    const outputCsvPath = path.join(tmpDir, "custom-results.csv");
+
+    const sha = "1234567890abcdef1234567890abcdef12345678";
+    const csvContent = `Rule ID,SCM Link\nrule-1,https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20\n`;
+    fs.writeFileSync(inputCsvPath, csvContent, "utf-8");
+
+    let capturedArgs: string[] = [];
+    let capturedOptions: { timeout?: number } = {};
+
+    const mockTruffleHogExec = async (_cmd: string, args: string[], opts: { timeout?: number }) => {
+      capturedArgs = args;
+      capturedOptions = opts;
+      return {
+        stdout: `{"DetectorName": "Slack", "Verified": false, "SourceMetadata": {"Data": {"Filesystem": {"line": 15}}}}`,
+        stderr: "",
+      };
+    };
+
+    const customConfig: AppConfig = {
+      ...mockConfig,
+      trufflehogVerificationMode: "no-verification",
+      trufflehogUserAgentSuffix: "SecurityTeamAudit-2026",
+      trufflehogTimeoutSeconds: 120,
+    };
+
+    const summary = await runPipeline([inputCsvPath], {
+      config: customConfig,
+      output: outputCsvPath,
+      fetchProvider: async () => "// file content",
+      trufflehogExecFn: mockTruffleHogExec,
+    });
+
+    expect(capturedArgs[0]).toBe("filesystem");
+    expect(capturedArgs[1]).toBe("--file");
+    expect(capturedArgs[2]).toContain("index.js");
+    expect(capturedArgs[3]).toBe("--json");
+    expect(capturedArgs[4]).toBe("--no-verification");
+    expect(capturedArgs[5]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
+    expect(capturedOptions.timeout).toBe(120000);
+    expect(summary.completed).toBe(1);
+    expect(summary.unverified).toBe(1);
+  });
+
+  it("handles TruffleHog process timeout by marking findings failed with clear error message (User Story 6)", async () => {
+    const inputCsvPath = path.join(tmpDir, "timeout-findings.csv");
+    const outputCsvPath = path.join(tmpDir, "timeout-results.csv");
+
+    const sha = "1234567890abcdef1234567890abcdef12345678";
+    const csvContent = `Rule ID,SCM Link\nrule-timeout,https://github.com/my-org/my-repo/blob/${sha}/src/slow.js#L10-L20\n`;
+    fs.writeFileSync(inputCsvPath, csvContent, "utf-8");
+
+    const mockTimeoutExec = async () => {
+      const err = new Error("Command failed: trufflehog");
+      (err as unknown as { killed: boolean; signal: string; timedOut: boolean }).killed = true;
+      (err as unknown as { killed: boolean; signal: string; timedOut: boolean }).signal = "SIGTERM";
+      (err as unknown as { killed: boolean; signal: string; timedOut: boolean }).timedOut = true;
+      throw err;
+    };
+
+    const timeoutConfig: AppConfig = {
+      ...mockConfig,
+      trufflehogTimeoutSeconds: 60,
+    };
+
+    const summary = await runPipeline([inputCsvPath], {
+      config: timeoutConfig,
+      output: outputCsvPath,
+      fetchProvider: async () => "// slow file content",
+      trufflehogExecFn: mockTimeoutExec,
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.results[0]!.status).toBe("failed");
+    expect(summary.results[0]!.error).toBe("TruffleHog process timed out after 60s");
   });
 });

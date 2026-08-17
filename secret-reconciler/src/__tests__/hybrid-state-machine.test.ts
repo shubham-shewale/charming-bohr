@@ -449,5 +449,74 @@ describe("Hybrid State Machine & Flow", () => {
         error: "TruffleHog execution failed: TruffleHog process crashed",
       });
     });
+
+    it("propagates TruffleHog options (verificationMode, userAgentSuffix, timeoutMs) when TruffleHog is triggered", async () => {
+      const fLikelySec = createMockFindingRef(0, 10, 20);
+
+      const workItem: FileWorkItem = {
+        contentIdentity: "github::my-org/my-repo::1234567890abcdef1234567890abcdef12345678::src/index.js",
+        provider: "github",
+        org: "my-org",
+        repo: "my-repo",
+        revision: "1234567890abcdef1234567890abcdef12345678",
+        filePath: "src/index.js",
+        findings: [fLikelySec],
+      };
+
+      const mockClaudeAnalyzer = {
+        analyzeWorkItem: vi.fn().mockResolvedValue([
+          {
+            findingRef: fLikelySec,
+            status: "completed",
+            llmClassification: "likely_secret",
+            llmReason: "Looks like an API key",
+            llmConfidence: 0.95,
+            error: "",
+          },
+        ]),
+      } as unknown as ClaudeAnalyzer;
+
+      let capturedArgs: string[] = [];
+      let capturedOptions: { timeout?: number } = {};
+
+      const mockTruffleHogExec = vi.fn().mockImplementation(async (_cmd: string, args: string[], opts: { timeout?: number }) => {
+        capturedArgs = args;
+        capturedOptions = opts;
+        return {
+          stdout: `{"DetectorName": "SlackWebhook", "Verified": false, "SourceMetadata": {"Data": {"Filesystem": {"line": 15}}}}`,
+          stderr: "",
+        };
+      });
+
+      const results = await executeHybridFlow(workItem, "/path/to/file.js", {
+        claudeAnalyzer: mockClaudeAnalyzer,
+        trufflehogOptions: {
+          execFn: mockTruffleHogExec,
+          verificationMode: "no-verification",
+          userAgentSuffix: "SecurityTeamAudit-2026",
+          timeoutMs: 120000,
+        },
+      });
+
+      expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
+      expect(capturedArgs).toEqual([
+        "filesystem",
+        "--file",
+        "/path/to/file.js",
+        "--json",
+        "--no-verification",
+        "--user-agent-suffix=SecurityTeamAudit-2026",
+      ]);
+      expect(capturedOptions.timeout).toBe(120000);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        findingRef: fLikelySec,
+        status: "completed",
+        llmClassification: "likely_secret",
+        trufflehogResult: "unverified",
+        trufflehogDetector: "SlackWebhook",
+      });
+    });
   });
 });

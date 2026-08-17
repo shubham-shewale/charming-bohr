@@ -29,6 +29,8 @@ describe("SIGINT & Graceful Cancellation Integration Tests", () => {
     maxFileSizeKb: 500,
     surroundingLines: 5,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   it("handles abort signal: stops accepting new work, flushes completed and pending results to CSV without corruption", async () => {

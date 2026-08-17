@@ -68,6 +68,14 @@ export type ScmParseResult =
 export type FindingStatus = "completed" | "failed" | "skipped" | "pending";
 
 /**
+ * Verification mode for TruffleHog scanning.
+ * - "all": Performs live API verification and outputs both verified and unverified findings.
+ * - "verified-only": Only outputs confirmed live credentials.
+ * - "no-verification": Disables network calls and reports all detections as unverified.
+ */
+export type TruffleHogVerificationMode = "all" | "verified-only" | "no-verification";
+
+/**
  * Result outcome of running TruffleHog analysis on a finding's line range.
  * @see CONTEXT.md — TruffleHog Result
  */

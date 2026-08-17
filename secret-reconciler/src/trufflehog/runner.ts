@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { TruffleHogDetection } from "../types.js";
+import type { TruffleHogDetection, TruffleHogVerificationMode } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
 export interface RunTruffleHogOptions {
+  verificationMode?: TruffleHogVerificationMode;
+  userAgentSuffix?: string;
   timeoutMs?: number;
   /** Custom executor override for testing. */
   execFn?: (
@@ -27,14 +29,46 @@ export async function runTruffleHog(
     return await execFileAsync(cmd, args, opts);
   });
 
+  const args = ["filesystem", "--file", filePath, "--json"];
+
+  if (options.verificationMode === "verified-only") {
+    args.push("--only-verified");
+  } else if (options.verificationMode === "no-verification") {
+    args.push("--no-verification");
+  }
+
+  if (options.userAgentSuffix && options.userAgentSuffix.trim().length > 0) {
+    args.push(`--user-agent-suffix=${options.userAgentSuffix.trim()}`);
+  }
+
   let stdout = "";
   try {
-    const res = await executor("trufflehog", ["filesystem", "--file", filePath, "--json"], {
+    const res = await executor("trufflehog", args, {
       timeout: timeoutMs,
     });
     stdout = res.stdout;
   } catch (err: unknown) {
-    const errorObj = err as { stdout?: string; stderr?: string; message?: string };
+    const errorObj = err as {
+      stdout?: string;
+      stderr?: string;
+      message?: string;
+      killed?: boolean;
+      signal?: string;
+      timedOut?: boolean;
+      code?: string;
+    };
+
+    const isTimeout =
+      errorObj?.code === "ETIMEDOUT" ||
+      errorObj?.timedOut === true ||
+      (errorObj?.killed === true && errorObj?.signal === "SIGTERM") ||
+      (typeof errorObj?.message === "string" && /timed?\s*out/i.test(errorObj.message));
+
+    if (isTimeout) {
+      const seconds = Math.round(timeoutMs / 1000);
+      throw new Error(`TruffleHog process timed out after ${seconds}s`);
+    }
+
     // TruffleHog may return stdout along with exit code or error
     if (errorObj && typeof errorObj.stdout === "string" && errorObj.stdout.trim().length > 0) {
       stdout = errorObj.stdout;

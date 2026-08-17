@@ -29,6 +29,8 @@ describe("File-Size Limit Skip Integration Test", () => {
     maxFileSizeKb: 10, // 10 KB limit for testing
     surroundingLines: 5,
     cleanupTempFiles: true,
+    trufflehogVerificationMode: "all",
+    trufflehogTimeoutSeconds: 60,
   };
 
   it("marks all findings for a file exceeding MAX_FILE_SIZE_KB as status=skipped with error and skips analysis", async () => {

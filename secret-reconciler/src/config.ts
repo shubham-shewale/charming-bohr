@@ -1,6 +1,6 @@
 import { z } from "zod";
 import dotenv from "dotenv";
-import type { Flow } from "./types.js";
+import type { Flow, TruffleHogVerificationMode } from "./types.js";
 
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,39 @@ function rangedIntString(min: number) {
   });
 }
 
+/**
+ * Optional string transformer that trims whitespace and returns undefined if empty.
+ */
+const optionalTrimmedString = z
+  .string()
+  .optional()
+  .transform((val) => {
+    if (!val || val.trim().length === 0) return undefined;
+    return val.trim();
+  });
+
+/**
+ * Coerces an optional string to an integer >= min, falling back to defaultValue when omitted or empty.
+ */
+function optionalRangedIntString(min: number, defaultValue: number) {
+  const label = min === 0 ? "non-negative integer (>= 0)" : `positive integer (>= ${min})`;
+  return z
+    .string()
+    .optional()
+    .transform((val, ctx) => {
+      if (val === undefined || val === "") return defaultValue;
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < min) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Expected a ${label} but got "${val}".`,
+        });
+        return z.NEVER;
+      }
+      return n;
+    });
+}
+
 
 const configSchema = z.object({
   FLOW: z.enum(["trufflehog-only", "llm-only", "hybrid"] as const, {
@@ -54,17 +87,21 @@ const configSchema = z.object({
   MAX_TOKENS_PER_REQUEST: rangedIntString(1),
   MAX_LLM_CALLS_PER_FILE: rangedIntString(1),
   GITHUB_PAT: z.string().min(1, "GITHUB_PAT must not be empty."),
-  AZURE_DEVOPS_PAT: z
-    .string()
-    .optional()
-    .transform((val) => {
-      if (!val || val.trim().length === 0) return undefined;
-      return val.trim();
-    }),
+  AZURE_DEVOPS_PAT: optionalTrimmedString,
   CONCURRENCY: rangedIntString(1),
   MAX_FILE_SIZE_KB: rangedIntString(1),
   SURROUNDING_LINES: rangedIntString(0),
   CLEANUP_TEMP_FILES: booleanString,
+  TRUFFLEHOG_VERIFICATION_MODE: z
+    .enum(["all", "verified-only", "no-verification"] as const, {
+      errorMap: () => ({
+        message: `Must be one of: "all", "verified-only", "no-verification".`,
+      }),
+    })
+    .optional()
+    .default("all"),
+  TRUFFLEHOG_TIMEOUT_SECONDS: optionalRangedIntString(1, 60),
+  TRUFFLEHOG_USER_AGENT_SUFFIX: optionalTrimmedString,
 });
 
 
@@ -88,6 +125,9 @@ export interface AppConfig {
   maxFileSizeKb: number;
   surroundingLines: number;
   cleanupTempFiles: boolean;
+  trufflehogVerificationMode: TruffleHogVerificationMode;
+  trufflehogTimeoutSeconds: number;
+  trufflehogUserAgentSuffix?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +170,9 @@ export function loadConfig(): AppConfig {
     maxFileSizeKb: env.MAX_FILE_SIZE_KB,
     surroundingLines: env.SURROUNDING_LINES,
     cleanupTempFiles: env.CLEANUP_TEMP_FILES,
+    trufflehogVerificationMode: env.TRUFFLEHOG_VERIFICATION_MODE,
+    trufflehogTimeoutSeconds: env.TRUFFLEHOG_TIMEOUT_SECONDS,
+    trufflehogUserAgentSuffix: env.TRUFFLEHOG_USER_AGENT_SUFFIX,
   };
 }
 

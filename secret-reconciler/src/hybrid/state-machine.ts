@@ -2,6 +2,7 @@ import {
   type FileWorkItem,
   type FindingRef,
   type FindingResult,
+  type TruffleHogVerificationMode,
 } from "../types.js";
 import { buildNonPendingFindingResult } from "../csv/reader.js";
 import type { ClaudeAnalyzer } from "../llm/analyzer.js";
@@ -82,6 +83,7 @@ export function transitionAfterLlm(llmResult: FindingResult): HybridTransitionAc
 
 export interface HybridFlowOptions {
   claudeAnalyzer: ClaudeAnalyzer;
+  trufflehogOptions?: RunTruffleHogOptions;
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
 }
 
@@ -125,9 +127,11 @@ export async function executeHybridFlow(
   // Step 3: Run TruffleHog conditionally if any findings require verification
   if (needsTrufflehog.length > 0) {
     try {
-      const detections = await runTruffleHog(localFilePath, {
-        execFn: options.trufflehogExecFn,
-      });
+      const thOpts: RunTruffleHogOptions = {
+        ...options.trufflehogOptions,
+        execFn: options.trufflehogOptions?.execFn ?? options.trufflehogExecFn,
+      };
+      const detections = await runTruffleHog(localFilePath, thOpts);
 
       const thResults = matchDetectionsToFindings(
         needsTrufflehog.map((item) => item.finding),

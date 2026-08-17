@@ -15,7 +15,11 @@ This repository provides an automated reconciliation tool that:
    - **`trufflehog-only`**: High-speed, local verification via the TruffleHog CLI scanner.
    - **`llm-only`**: Deep semantic code context analysis using Claude 3.5 Sonnet to distinguish false positives from real secrets.
    - **`hybrid`**: Cost-effective dual-stage pipeline (LLM triage first; automatic escalation to TruffleHog only for uncertain or likely secrets).
-4. **Supports Resumable & Incremental Execution** by treating the output CSV as valid input, auto-skipping completed rows, and supporting selective failure retries.
+4. **Fine-Grained TruffleHog Execution Controls**:
+   - `TRUFFLEHOG_VERIFICATION_MODE`: Choose between `"all"` (default), `"verified-only"`, and `"no-verification"` (for rapid offline scanning).
+   - `TRUFFLEHOG_USER_AGENT_SUFFIX`: Custom audit identifier appended to scanner requests for log attribution.
+   - `TRUFFLEHOG_TIMEOUT_SECONDS`: Operator-configured subprocess timeout with clear diagnostic reporting.
+5. **Supports Resumable & Incremental Execution** by treating the output CSV as valid input, auto-skipping completed rows, and supporting selective failure retries.
 
 ---
 
