@@ -1,5 +1,7 @@
 /**
- * Pricing rates for Claude 3 Haiku / Haiku v1 model per 1M tokens.
+ * Configured accounting rates per 1M gateway tokens.
+ * These defaults preserve the existing estimate until gateway-specific
+ * accounting is introduced.
  */
 export const HAIKU_INPUT_COST_PER_MILLION = 0.25;
 export const HAIKU_OUTPUT_COST_PER_MILLION = 1.25;

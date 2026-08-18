@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { parse } from "csv-parse/sync";
 import { runPipeline } from "../pipeline.js";
+import { RESULT_COLUMNS } from "../csv/writer.js";
 import type { AppConfig } from "../config.js";
 
 describe("Two-CSV Merge and Resume Integration Tests", () => {
@@ -97,14 +98,7 @@ const SHARED_KEY = "ghp_123456789012345678901234567890123456"; // line 35
       "SCM Link",
       "Suppressed By",
       "Reason",
-      "source_file",
-      "status",
-      "trufflehog_result",
-      "trufflehog_detector",
-      "llm_classification",
-      "llm_reason",
-      "llm_confidence",
-      "error",
+      ...RESULT_COLUMNS,
     ]);
 
     // Check row 0 (from unsuppressed.csv)

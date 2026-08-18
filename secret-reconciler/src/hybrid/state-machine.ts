@@ -4,7 +4,7 @@ import {
   type FindingResult,
 } from "../types.js";
 import { buildNonPendingFindingResult } from "../csv/reader.js";
-import type { ClaudeAnalyzer } from "../llm/analyzer.js";
+import type { ContextualSecretAnalyzer } from "../llm/analyzer.js";
 import { runTruffleHog, type RunTruffleHogOptions } from "../trufflehog/runner.js";
 import { matchDetectionsToFindings } from "../trufflehog/matcher.js";
 
@@ -74,7 +74,9 @@ export function transitionAfterVerification(
 }
 
 export interface HybridFlowOptions {
-  claudeAnalyzer: ClaudeAnalyzer;
+  contextualAnalyzer?: ContextualSecretAnalyzer;
+  /** @deprecated Use contextualAnalyzer. */
+  claudeAnalyzer?: ContextualSecretAnalyzer;
   trufflehogOptions?: RunTruffleHogOptions;
   /** Backwards-compatible executor injection used by existing callers/tests. */
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
@@ -106,6 +108,7 @@ export async function executeHybridFlow(
   localFilePath: string,
   options: HybridFlowOptions
 ): Promise<FindingResult[]> {
+  const contextualAnalyzer = options.contextualAnalyzer ?? options.claudeAnalyzer;
   const resultMap = new Map<FindingRef, FindingResult>();
   const pendingFindings = workItem.findings.filter(
     (finding) => finding.initialStatus === "pending"
@@ -161,15 +164,33 @@ export async function executeHybridFlow(
   }
 
   if (needsLlm.length > 0) {
+    if (!contextualAnalyzer) {
+      for (const { finding, verificationResult } of needsLlm) {
+        resultMap.set(finding, {
+          ...verificationResult,
+          status: "completed",
+          llmClassification: "uncertain",
+          llmConfidence: 0,
+          llmReason: "Context classifier is disabled; manual review required",
+          error: "",
+        });
+      }
+      return workItem.findings.map((finding) => resultMap.get(finding)!);
+    }
+
     const llmWorkItem: FileWorkItem = {
       ...workItem,
       findings: needsLlm.map(({ finding }) => finding),
     };
 
     try {
-      const llmResults = await options.claudeAnalyzer.analyzeWorkItem(
+      const verificationResultMap = new Map(
+        needsLlm.map(({ finding, verificationResult }) => [finding, verificationResult])
+      );
+      const llmResults = await contextualAnalyzer.analyzeWorkItem(
         llmWorkItem,
-        localFilePath
+        localFilePath,
+        { verificationResults: verificationResultMap }
       );
       const llmResultMap = new Map(
         llmResults.map((result) => [result.findingRef, result])
@@ -195,8 +216,11 @@ export async function executeHybridFlow(
       for (const { finding, verificationResult } of needsLlm) {
         resultMap.set(finding, {
           ...verificationResult,
-          status: "failed",
-          error: `LLM analysis failed: ${message}`,
+          status: "completed",
+          llmClassification: "uncertain",
+          llmConfidence: 0,
+          llmReason: `AI Gateway analysis failed: ${message}`,
+          error: "ai_gateway_error",
         });
       }
     }

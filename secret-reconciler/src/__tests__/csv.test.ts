@@ -8,7 +8,7 @@ import {
   groupFindingsByContentIdentity,
   mergeHeaders,
 } from "../csv/reader.js";
-import { writeResultsCsv } from "../csv/writer.js";
+import { RESULT_COLUMNS, writeResultsCsv } from "../csv/writer.js";
 import type { FindingResult } from "../types.js";
 
 describe("CSV Reader & Writer", () => {
@@ -177,7 +177,9 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
     writeResultsCsv(outputPath, [mockFinding], originalHeaders);
 
     const writtenContent = fs.readFileSync(outputPath, "utf-8");
-    expect(writtenContent).toContain("Rule ID,SCM Link,source_file,status,trufflehog_result,trufflehog_detector,llm_classification,llm_reason,llm_confidence,error");
+    expect(writtenContent.split("\n")[0]).toBe(
+      ["Rule ID", "SCM Link", ...RESULT_COLUMNS].join(",")
+    );
     expect(writtenContent).toContain("rule-123");
     expect(writtenContent).toContain("completed");
     expect(writtenContent).toContain("verified");
@@ -232,11 +234,75 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
 
     const writtenContent = fs.readFileSync(outputPath, "utf-8");
     const lines = writtenContent.trim().split("\n");
-    expect(lines[0]).toBe("Rule ID,SCM Link,Suppressed By,Reason,source_file,status,trufflehog_result,trufflehog_detector,llm_classification,llm_reason,llm_confidence,error");
+    expect(lines[0]).toBe(
+      ["Rule ID", "SCM Link", "Suppressed By", "Reason", ...RESULT_COLUMNS].join(",")
+    );
     // Row 1 should have empty Suppressed By and Reason
     expect(lines[1]).toContain("rule-01,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,,,unsuppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
     // Row 2 should have alice and test secret
     expect(lines[2]).toContain("rule-02,https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/f.js#L1,alice,test secret,suppressed.csv,completed,verified,AWS,likely_secret,Found key,0.95,");
+  });
+
+  it("round-trips contextual and detector-gap audit fields for resume", async () => {
+    const outputPath = path.join(tmpDir, "contextual-output.csv");
+    const target: FindingResult = {
+      findingRef: {
+        rowIndex: 0,
+        sourceFile: "input.csv",
+        rawRow: {
+          "Rule ID": "internal-token",
+          "SCM Link": "https://github.com/org/repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/deploy/prod.yaml#L8",
+        },
+        initialStatus: "pending",
+      },
+      status: "completed",
+      trufflehogResult: "not_detected",
+      llmClassification: "probable_secret",
+      llmReason: "Production deployment credential field",
+      llmConfidence: 0.91,
+      contextAssessment: {
+        classification: "probable_secret",
+        fileRole: "deployment_manifest",
+        environment: "production",
+        exposureScope: "internal",
+        principalScope: "service_account",
+        secretKind: "api_token",
+        evidenceStrength: "strong",
+        confidence: 0.91,
+        evidence: [{ source: "content", description: "service account token", line: 8 }],
+        benignSignals: [],
+        riskSignals: ["production marker"],
+        missingEvidence: ["live verification"],
+        reason: "Production deployment credential field",
+      },
+      detectorGapAssessment: {
+        status: "new_detector_candidate",
+        proposedName: "InternalToken",
+        keywords: ["internal_token"],
+        regexTemplate: "INT_[A-Za-z0-9]{24}",
+        exclusionSuggestions: ["test fixtures"],
+        evidence: ["not detected"],
+        reason: "Generalized token shape was not detected",
+      },
+      llmModel: "security-context-v1",
+      llmPromptVersion: "context-classifier-v1+detector-advisor-v1",
+      error: "",
+    };
+
+    writeResultsCsv(outputPath, [target], ["Rule ID", "SCM Link"]);
+    const { findings } = await readFindingsCsv(outputPath);
+    const resumed = buildNonPendingFindingResult(findings[0]!);
+
+    expect(resumed.contextAssessment).toMatchObject({
+      classification: "probable_secret",
+      fileRole: "deployment_manifest",
+      evidenceStrength: "strong",
+    });
+    expect(resumed.detectorGapAssessment).toMatchObject({
+      status: "new_detector_candidate",
+      proposedName: "InternalToken",
+    });
+    expect(resumed.llmPromptVersion).toContain("detector-advisor-v1");
   });
 
   it("mergeHeaders combines multiple header arrays with normalized deduplication", () => {

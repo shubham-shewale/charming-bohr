@@ -144,10 +144,100 @@ export interface TruffleHogDetection {
  * Three-valued classification result of LLM analysis on a finding.
  * @see CONTEXT.md — LLM Classification
  */
-export type LlmClassification =
-  | "false_positive"
-  | "likely_secret"
+export type ContextualClassification =
+  | "probable_secret"
+  | "probable_false_positive"
   | "uncertain";
+
+/** Legacy values remain readable so older output CSVs can still be resumed. */
+export type LlmClassification =
+  | ContextualClassification
+  | "false_positive"
+  | "likely_secret";
+
+export type FileRole =
+  | "production_configuration"
+  | "infrastructure_as_code"
+  | "deployment_manifest"
+  | "application_code"
+  | "test_fixture"
+  | "documentation"
+  | "example"
+  | "generated_file"
+  | "unknown";
+
+export type EnvironmentScope =
+  | "production"
+  | "staging"
+  | "development"
+  | "test"
+  | "unknown";
+
+export type ExposureScope =
+  | "internet_facing"
+  | "internal"
+  | "restricted"
+  | "local_only"
+  | "unknown";
+
+export type PrincipalScope =
+  | "human_user"
+  | "service_account"
+  | "application"
+  | "workload"
+  | "shared_account"
+  | "unknown";
+
+export type SecretKind =
+  | "cloud_credential"
+  | "database_credential"
+  | "api_token"
+  | "private_key"
+  | "password"
+  | "connection_string"
+  | "certificate"
+  | "unknown";
+
+export interface ContextEvidence {
+  source: "path" | "content" | "metadata";
+  description: string;
+  line?: number;
+}
+
+export interface SecretContextAssessment {
+  classification: ContextualClassification;
+  fileRole: FileRole;
+  environment: EnvironmentScope;
+  exposureScope: ExposureScope;
+  principalScope: PrincipalScope;
+  secretKind: SecretKind;
+  evidenceStrength: "strong" | "moderate" | "weak";
+  confidence: number;
+  evidence: ContextEvidence[];
+  benignSignals: string[];
+  riskSignals: string[];
+  missingEvidence: string[];
+  reason: string;
+}
+
+export type DetectorGapStatus =
+  | "new_detector_candidate"
+  | "existing_detector_tuning"
+  | "custom_verifier_candidate"
+  | "not_a_detector_gap"
+  | "uncertain";
+
+export interface DetectorGapAssessment {
+  status: DetectorGapStatus;
+  proposedName?: string;
+  keywords: string[];
+  secretShape?: string;
+  regexTemplate?: string;
+  verificationApproach?: string;
+  exclusionSuggestions: string[];
+  evidence: string[];
+  reason: string;
+}
 
 /**
  * Final processing result for a finding row, to be written to the output CSV.
@@ -160,5 +250,9 @@ export interface FindingResult {
   llmClassification?: LlmClassification;
   llmReason?: string;
   llmConfidence?: number;
+  contextAssessment?: SecretContextAssessment;
+  detectorGapAssessment?: DetectorGapAssessment;
+  llmModel?: string;
+  llmPromptVersion?: string;
   error?: string;
 }

@@ -45,7 +45,7 @@ One of three analysis strategies applied to findings: TruffleHog-only, LLM-only,
 _Avoid_: Mode, strategy, pipeline
 
 **LLM Classification**:
-The three-valued result of LLM analysis: `false_positive`, `likely_secret`, or `uncertain`. Never a binary true/false.
+The three-valued contextual plausibility result: `probable_false_positive`, `probable_secret`, or `uncertain`. It is independent of TruffleHog credential validity and never claims that an unverified credential is active, expired, or rotated.
 _Avoid_: Verdict, judgment
 
 **TruffleHog Result**:

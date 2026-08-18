@@ -1,6 +1,6 @@
 # Secret Findings Reconciliation
 
-> A high-throughput reconciliation engine and CLI tool that processes large CSV finding reports from secret scanners, deduplicates source file fetches across GitHub and Azure DevOps, and classifies potential secrets using TruffleHog and/or Anthropic Claude.
+> A high-throughput reconciliation engine and CLI tool that processes large CSV finding reports, verifies potential credentials with TruffleHog, and performs guarded contextual classification through a self-hosted AI Gateway.
 
 ---
 
@@ -13,7 +13,7 @@ This repository provides an automated reconciliation tool that:
 2. **Deduplicates Network Fetches** by grouping findings into unique **Content Identities** (one fetch per unique file revision, regardless of finding count).
 3. **Classifies Potential Secrets** across three flexible analysis flows:
    - **`trufflehog-only`**: High-speed, local verification via the TruffleHog CLI scanner.
-   - **`llm-only`**: Deep semantic code context analysis using Claude 3.5 Sonnet to distinguish false positives from real secrets.
+   - **`llm-only`**: Guarded semantic context analysis through the configured AI Gateway.
    - **`hybrid`**: Verification-first dual-stage pipeline (TruffleHog first; LLM false-positive analysis only for unverified or not-detected findings).
 4. **Fine-Grained TruffleHog Execution Controls**:
    - Pinned TruffleHog `3.97.0` runtime contract with startup validation.
@@ -38,7 +38,7 @@ All modules, CLI flags, output columns, and logs strictly adhere to the domain l
 | **File Work Item** | A batch unit: one unique Content Identity paired with all findings referencing that file. |
 | **Flow** | The classification strategy: `trufflehog-only`, `llm-only`, or `hybrid`. |
 | **Status** | The processing state in the output CSV: `completed`, `failed`, `skipped`, or `pending`. |
-| **LLM Classification** | The three-valued semantic assessment: `false_positive`, `likely_secret`, or `uncertain`. |
+| **LLM Classification** | Contextual plausibility: `probable_false_positive`, `probable_secret`, or `uncertain`; it never represents credential validity. |
 | **TruffleHog Result** | The lossless scanner outcome: `verified`, `unverified`, `unknown`, `not_detected`, or `ambiguous`. |
 
 ---
@@ -57,7 +57,8 @@ All modules, CLI flags, output columns, and logs strictly adhere to the domain l
 │   │   ├── csv/                # Streaming CSV parser and atomic writer
 │   │   ├── fetcher/            # Rate-limited, cached file fetcher
 │   │   ├── hybrid/             # Hybrid flow state machine
-│   │   ├── llm/                # Claude client, context builder, and cost tracker
+│   │   ├── ai-gateway/         # Provider-neutral self-hosted gateway adapter
+│   │   ├── llm/                # Redaction, evidence policy, prompts, tools, and contextual analysis
 │   │   ├── parsers/            # GitHub and Azure DevOps SCM URL parsers
 │   │   ├── providers/          # SCM REST API clients (GitHub & Azure DevOps)
 │   │   ├── trufflehog/         # TruffleHog CLI runner and line matcher

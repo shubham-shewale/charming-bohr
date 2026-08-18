@@ -271,9 +271,26 @@ describe("verification-first Hybrid orchestration", () => {
     });
 
     expect(results[0]).toMatchObject({
-      status: "failed",
+      status: "completed",
       trufflehogResult: "not_detected",
-      error: "LLM analysis failed: gateway unavailable",
+      llmClassification: "uncertain",
+      error: "ai_gateway_error",
+    });
+  });
+
+  it("keeps unresolved scanner evidence reviewable when contextual classification is disabled", async () => {
+    const target = finding(0, 10);
+    const trufflehogExecFn = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+    const results = await executeHybridFlow(workItem([target]), "/tmp/file.js", {
+      trufflehogExecFn,
+    });
+
+    expect(results[0]).toMatchObject({
+      status: "completed",
+      trufflehogResult: "not_detected",
+      llmClassification: "uncertain",
+      llmReason: "Context classifier is disabled; manual review required",
     });
   });
 });

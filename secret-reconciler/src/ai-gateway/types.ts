@@ -1,0 +1,46 @@
+export type AiGatewayRole = "system" | "user" | "assistant" | "tool";
+
+export interface AiGatewayMessage {
+  role: AiGatewayRole;
+  content: string;
+  toolCallId?: string;
+  toolCalls?: AiGatewayToolCall[];
+}
+
+export interface AiGatewayToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface AiGatewayToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export interface AiGatewayRequest {
+  model: string;
+  messages: AiGatewayMessage[];
+  tools: AiGatewayToolDefinition[];
+  toolChoice: "auto" | "required";
+  maxTokens: number;
+}
+
+export interface AiGatewayResponse {
+  toolCalls: AiGatewayToolCall[];
+  content?: string;
+  model?: string;
+  requestId?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
+}
+
+export interface AiGatewayClientLike {
+  complete(request: AiGatewayRequest): Promise<AiGatewayResponse>;
+}

@@ -25,7 +25,8 @@ import {
   type FindingResult,
 } from "./types.js";
 
-import { ClaudeAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
+import { ContextualSecretAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
+import type { AiGatewayClientLike } from "./ai-gateway/types.js";
 import { CostTracker } from "./llm/cost-tracker.js";
 import { executeHybridFlow } from "./hybrid/state-machine.js";
 
@@ -48,6 +49,7 @@ export interface PipelineOptions {
   fetchProvider?: (source: CanonicalSource) => Promise<string>;
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
   anthropicClient?: AnthropicClientLike;
+  aiGatewayClient?: AiGatewayClientLike;
   onProgress?: (progress: PipelineProgress) => void;
   signal?: AbortSignal;
   sigintTimeoutMs?: number;
@@ -122,7 +124,7 @@ async function runPass(
     tokenPool,
     fetcher,
     config,
-    claudeAnalyzer,
+    contextualAnalyzer,
     trufflehogOptions,
     processedResultsMap,
     onFileDone,
@@ -132,7 +134,7 @@ async function runPass(
     tokenPool: TokenPool;
     fetcher: FileFetcher;
     config: AppConfig;
-    claudeAnalyzer?: ClaudeAnalyzer;
+    contextualAnalyzer?: ContextualSecretAnalyzer;
     trufflehogOptions: RunTruffleHogOptions;
     processedResultsMap: Map<FindingRef, FindingResult>;
     onFileDone: (results: FindingResult[]) => void;
@@ -168,10 +170,10 @@ async function runPass(
             error: errMsg,
           }));
         } else if (config.flow === "llm-only") {
-          if (!claudeAnalyzer) {
+          if (!contextualAnalyzer) {
             throw new Error("LLM analyzer is not configured for llm-only flow");
           }
-          results = await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
+          results = await contextualAnalyzer.analyzeWorkItem(workItem, localFilePath);
         } else if (config.flow === "trufflehog-only") {
           results = await scanWithTruffleHog(
             localFilePath,
@@ -179,11 +181,8 @@ async function runPass(
             trufflehogOptions
           );
         } else if (config.flow === "hybrid") {
-          if (!claudeAnalyzer) {
-            throw new Error("LLM analyzer is not configured for hybrid flow");
-          }
           results = await executeHybridFlow(workItem, localFilePath, {
-            claudeAnalyzer,
+            contextualAnalyzer,
             trufflehogOptions,
           });
         } else {
@@ -260,10 +259,11 @@ export async function runPipeline(
   });
 
   const costTracker = new CostTracker();
-  const claudeAnalyzer = config.flow === "trufflehog-only"
+  const contextualAnalyzer = config.flow === "trufflehog-only" || config.llmContextClassifierEnabled === false
     ? undefined
-    : new ClaudeAnalyzer({
+    : new ContextualSecretAnalyzer({
         config,
+        aiGatewayClient: options.aiGatewayClient,
         anthropicClient: options.anthropicClient,
         costTracker,
       });
@@ -367,7 +367,7 @@ export async function runPipeline(
     tokenPool,
     fetcher,
     config,
-    claudeAnalyzer,
+    contextualAnalyzer,
     trufflehogOptions,
     processedResultsMap,
     onFileDone,
@@ -491,6 +491,9 @@ export async function runPipeline(
   let pending = 0;
 
   for (const res of finalResults) {
+    if (res.error === "llm_invalid_output") {
+      llmInvalidOutput++;
+    }
     if (res.status === "completed") {
       completed++;
       if (res.trufflehogResult === "verified") verified++;
@@ -499,16 +502,13 @@ export async function runPipeline(
       else if (res.trufflehogResult === "not_detected") notDetected++;
       else if (res.trufflehogResult === "ambiguous") ambiguous++;
 
-      if (res.llmClassification === "false_positive") falsePositive++;
-      else if (res.llmClassification === "likely_secret") likelySecret++;
+      if (res.llmClassification === "false_positive" || res.llmClassification === "probable_false_positive") falsePositive++;
+      else if (res.llmClassification === "likely_secret" || res.llmClassification === "probable_secret") likelySecret++;
       else if (res.llmClassification === "uncertain") uncertain++;
     } else if (res.status === "skipped") {
       skipped++;
     } else if (res.status === "failed") {
       failed++;
-      if (res.error === "llm_invalid_output") {
-        llmInvalidOutput++;
-      }
     } else if (res.status === "pending") {
       pending++;
     }

@@ -14,7 +14,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.117.1",
     "commander": "^12.1.0",
     "csv-parse": "^7.0.2",
     "csv-stringify": "^6.8.3",

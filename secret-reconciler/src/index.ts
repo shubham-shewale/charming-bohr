@@ -75,8 +75,11 @@ program
     console.log("✓ Configuration loaded successfully.");
     console.log(`  Flow:        ${effectiveConfig.flow}`);
     console.log(`  Concurrency: ${effectiveConfig.concurrency}`);
-    if (effectiveConfig.flow !== "trufflehog-only") {
-      console.log(`  Model:       ${effectiveConfig.anthropicModel}`);
+    if (
+      effectiveConfig.flow !== "trufflehog-only" &&
+      effectiveConfig.llmContextClassifierEnabled !== false
+    ) {
+      console.log(`  Model:       ${effectiveConfig.aiGatewayModel ?? effectiveConfig.anthropicModel}`);
     }
     console.log(`  Check IDs:   ${effectiveConfig.checkIds && effectiveConfig.checkIds.length > 0 ? effectiveConfig.checkIds.join(", ") : "(all)"}`);
     console.log(`  Limit:       ${effectiveConfig.limit !== undefined ? effectiveConfig.limit : "(unlimited)"}`);
@@ -142,7 +145,7 @@ program
         }
 
         if (effectiveConfig.flow === "hybrid" || effectiveConfig.flow === "llm-only") {
-          console.log(`  LLM Classifications: False Positives: ${pipelineSummary.falsePositive}, Likely Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
+          console.log(`  Context Classifications: Probable False Positives: ${pipelineSummary.falsePositive}, Probable Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
           if (pipelineSummary.tokenUsage) {
             console.log(`  Token Usage: Input: ${pipelineSummary.tokenUsage.inputTokens}, Output: ${pipelineSummary.tokenUsage.outputTokens}, Estimated Cost: $${pipelineSummary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
           }

@@ -1,6 +1,6 @@
 # Secret Reconciler (`secret-reconciler`)
 
-> A high-throughput CLI tool that processes secret-scanner CSV finding exports, deduplicates source code fetches across GitHub and Azure DevOps, and classifies each finding using TruffleHog and/or Anthropic Claude.
+> A high-throughput CLI that verifies potential credentials with TruffleHog and adds guarded contextual classification through a self-hosted AI Gateway.
 
 ---
 
@@ -27,8 +27,11 @@
 - 🌐 **Multi-Provider SCM Support**: Direct REST API integration for both **GitHub** and **Azure DevOps** with exact 40-character commit revision pinning.
 - 🧠 **Three Analysis Flows**:
   - `trufflehog-only`: High-speed local verification via TruffleHog CLI.
-  - `llm-only`: Deep semantic analysis via Anthropic Claude 3.5 Sonnet to eliminate false positives (test fixtures, docs, dummy values).
-  - `hybrid`: Verification-first analysis (TruffleHog always runs; the LLM is used only for `unverified` or `not_detected` findings).
+  - `llm-only`: Guarded semantic context analysis through the configured AI Gateway.
+  - `hybrid`: Verification first; only `unverified` or `not_detected` findings receive contextual analysis.
+- 🧭 **Context Dimensions**: Records file role, environment, exposure, principal scope, secret kind, evidence strength, and cited evidence without claiming credential validity.
+- 🧩 **Detector Gap Advice**: Optionally proposes review-only custom detector candidates for `not_detected + probable_secret` outcomes.
+- 🔒 **Gateway Guardrails**: Redacts suspected values, uses forced schema-validated tool calls, caps path-only confidence, and restricts context expansion to the same fetched file.
 - 🔄 **Output-as-Input Resume**: Directly re-feed an output CSV to resume interrupted jobs or retry failed rows without separate checkpoint files.
 - 🛡️ **Graceful Cancellation**: Intercepts `SIGINT` / `SIGTERM` signals to finish in-flight requests and flush an uncorrupted CSV before exiting.
 - 💰 **Cost & Token Tracking**: Real-time progress updates tracking input/output tokens and estimated USD expenditure.
@@ -51,7 +54,7 @@ flowchart TD
         F --> G{Flow Strategy}
         
         G -- trufflehog-only --> H[Run TruffleHog Scanner]
-        G -- llm-only --> I[Run Claude 3.5 Sonnet Analysis]
+        G -- llm-only --> I[Run AI Gateway Context Analysis]
         G -- hybrid --> J[Run Hybrid State Machine]
     end
     
@@ -65,22 +68,24 @@ flowchart TD
 
 ### 2. Hybrid Flow State Machine
 
-In `hybrid` flow, TruffleHog owns credential detection and validity. Verified, verifier-error (`unknown`), and unsafe-correlation (`ambiguous`) results are terminal and never sent to the LLM. Only `unverified` and `not_detected` findings reach the LLM false-positive intelligence layer:
+In `hybrid` flow, TruffleHog owns credential detection and validity. Verified, verifier-error (`unknown`), and unsafe-correlation (`ambiguous`) results are terminal and never sent to the LLM. Only `unverified` and `not_detected` findings reach guarded contextual analysis:
 
 ```mermaid
 stateDiagram-v2
     [*] --> TruffleHog
     TruffleHog --> Complete_Verified: verified
     TruffleHog --> Manual_Review: unknown / ambiguous
-    TruffleHog --> LLM_Analysis: unverified / not_detected
+    TruffleHog --> Context_Analysis: unverified / not_detected
     TruffleHog --> Failed: execution error
-    LLM_Analysis --> Complete_With_Both: classification
-    LLM_Analysis --> Failed_With_Evidence: LLM error
+    Context_Analysis --> Detector_Advice: not_detected + probable_secret
+    Context_Analysis --> Complete_With_Both: contextual assessment
+    Context_Analysis --> Needs_Review: gateway error / invalid output
+    Detector_Advice --> Complete_With_Both: review-only proposal
     Complete_Verified --> [*]
     Manual_Review --> [*]
     Complete_With_Both --> [*]
     Failed --> [*]
-    Failed_With_Evidence --> [*]
+    Needs_Review --> [*]
 ```
 
 ---
@@ -113,13 +118,13 @@ curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scr
 trufflehog --version
 ```
 
-### 3. API Keys & Token Scopes
+### 3. Credentials & Gateway Access
 
 | Provider | Variable | Required Permissions / Scopes |
 | :--- | :--- | :--- |
 | **GitHub** | `GITHUB_PAT` | Fine-grained PAT with **Contents: Read-only** on target repos, or Classic PAT with `repo` scope (for private repositories). |
 | **Azure DevOps** | `AZURE_DEVOPS_PAT` | Personal Access Token with **Code (Read)** permission. |
-| **Anthropic** | `ANTHROPIC_API_KEY` | Standard Anthropic API key with access to Claude 3.5 Sonnet (`claude-3-5-sonnet-20241022`). |
+| **AI Gateway** | `AI_GATEWAY_AUTH_TOKEN` | Optional bearer token; may be omitted when the self-hosted gateway uses mTLS or workload identity. |
 
 ---
 
@@ -151,9 +156,15 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | Environment Variable | Type | Default / Example | Required? | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `FLOW` | Enum | `hybrid` | **Yes** | Analysis flow: `trufflehog-only`, `llm-only`, or `hybrid`. |
-| `ANTHROPIC_API_KEY` | String | `sk-ant-...` | **Yes** (LLM/Hybrid) | Anthropic API key. |
-| `ANTHROPIC_MODEL` | String | `claude-3-5-sonnet-20241022` | **Yes** (LLM/Hybrid) | Claude model identifier. |
-| `MAX_TOKENS_PER_REQUEST` | Integer | `4096` | **Yes** (LLM/Hybrid) | Maximum completion tokens per Claude request (>= 1). |
+| `AI_GATEWAY_URL` | URL | `https://ai-gateway.internal` | Conditional | Required when contextual classification is enabled. The gateway must expose an OpenAI-compatible `/v1/chat/completions` endpoint. |
+| `AI_GATEWAY_MODEL` | String | `security-context-model` | Conditional | Gateway model identifier. |
+| `AI_GATEWAY_AUTH_TOKEN` | String | `...` | *Optional* | Bearer token; omit for other gateway authentication mechanisms. |
+| `AI_GATEWAY_TIMEOUT_SECONDS` | Integer | `30` | *Optional* | Per-request timeout. |
+| `LLM_CONTEXT_CLASSIFIER_ENABLED` | Boolean | `true` | *Optional* | When false in Hybrid, unresolved findings become `uncertain` without a gateway request. Cannot be false for `llm-only`. |
+| `LLM_DETECTOR_ADVISOR_ENABLED` | Boolean | `false` | *Optional* | Enables review-only detector advice for `not_detected + probable_secret`. |
+| `LLM_MAX_CONTEXT_EXPANSIONS` | Integer | `2` | *Optional* | Maximum bounded context tool calls per batch. |
+| `LLM_MAX_CONTEXT_LINES` | Integer | `150` | *Optional* | Maximum lines returned by each context tool call. |
+| `MAX_TOKENS_PER_REQUEST` | Integer | `4096` | Conditional | Maximum completion tokens per gateway request (>= 1). |
 | `MAX_LLM_CALLS_PER_FILE` | Integer | `3` | **Yes** (LLM/Hybrid) | Maximum LLM batch calls per file work item (>= 1). |
 | `GITHUB_PAT` | String | `ghp_...` | **Yes** | GitHub Personal Access Token. |
 | `AZURE_DEVOPS_PAT` | String | `...` | *Optional* | Azure DevOps Personal Access Token (required if Azure links exist). |
@@ -174,7 +185,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 
 | Flow | Strengths | Ideal For | LLM Used? | Scanner Used? |
 | :--- | :--- | :--- | :--- | :--- |
-| **`hybrid`** *(Recommended)* | Preserves deterministic scanner evidence first, then adds semantic false-positive context only where needed. | Production scans containing thousands of mixed alerts. | ✅ (Conditional) | ✅ (Always) |
+| **`hybrid`** *(Recommended)* | Preserves scanner evidence, then classifies context and optionally identifies detector gaps. | Production scans containing mixed alerts. | ✅ (Conditional) | ✅ (Always) |
 | **`llm-only`** | Best for understanding complex code context, documentation, mock tests, and template files. | Eliminating false positives where regex scanners trigger on test fixtures. | ✅ | ❌ |
 | **`trufflehog-only`** | Ultra-fast, zero API cost, validates live detector endpoints. | Quick verification runs without external LLM dependencies. | ❌ | ✅ |
 
@@ -293,7 +304,7 @@ The reconciler auto-detects the SCM link column by checking header variations: `
 
 ### Output Columns & Values
 
-The output CSV preserves **all original input columns** verbatim and appends 8 reconciliation columns:
+The output CSV preserves **all original input columns** verbatim and appends 20 reconciliation columns. The contextual fields are evidence, not credential-validity claims:
 
 | Output Column | Type | Example Values | Description |
 | :--- | :--- | :--- | :--- |
@@ -301,16 +312,28 @@ The output CSV preserves **all original input columns** verbatim and appends 8 r
 | `status` | Enum | `completed`, `failed`, `skipped`, `pending` | Final processing status of the finding. |
 | `trufflehog_result` | Enum | `verified`, `unverified`, `unknown`, `not_detected`, `ambiguous`, `""` | Lossless TruffleHog outcome for the finding's line range. |
 | `trufflehog_detector` | String | `AWS`, `SlackWebhook`, `GenericKey` | TruffleHog detector type if a secret was detected. |
-| `llm_classification` | Enum | `false_positive`, `likely_secret`, `uncertain`, `llm_invalid_output` | Semantic classification from Claude 3.5 Sonnet. |
+| `llm_classification` | Enum | `probable_false_positive`, `probable_secret`, `uncertain` | Contextual plausibility, independent of live verification. |
 | `llm_reason` | String | `"Variable is a mock test token in fixture"` | Brief explanation generated by the LLM. |
 | `llm_confidence` | Float | `0.95` | Confidence score between `0.0` and `1.0`. |
+| `llm_evidence_strength` | Enum | `weak`, `moderate`, `strong` | Deterministically constrained evidence tier. |
+| `llm_file_role` | Enum | `deployment_manifest`, `test_fixture`, `unknown` | Inferred role of the file. |
+| `llm_environment` | Enum | `production`, `test`, `unknown` | Inferred environment with evidence. |
+| `llm_exposure_scope` | Enum | `internet_facing`, `internal`, `unknown` | Exposure inference; path-only claims are rejected. |
+| `llm_principal_scope` | Enum | `service_account`, `workload`, `unknown` | Likely principal type. |
+| `llm_secret_kind` | Enum | `database_credential`, `api_token`, `unknown` | Likely secret category. |
+| `llm_evidence` | JSON | `{...}` | Cited evidence, benign/risk signals, and missing evidence. |
+| `detector_gap_status` | Enum | `new_detector_candidate`, `uncertain`, `""` | Review-only gap assessment. |
+| `detector_gap_reason` | String | `"Scanner did not detect the generalized token shape"` | Detector proposal rationale. |
+| `detector_gap_proposal` | JSON | `{...}` | Generalized proposal; never applied automatically. |
+| `llm_model` | String | `security-context-model` | Audited gateway model. |
+| `llm_prompt_version` | String | `context-classifier-v1` | Versioned prompt/tool contract. |
 | `error` | String | `""`, `File size (650 KB) exceeds limit` | Error or skip reason if not completed. |
 
 #### Status & Classification Value Dictionary
 
 - **`status`**:
   - `completed`: Successfully analyzed by the configured flow.
-  - `failed`: Network fetch failed, scanner error, or unrecoverable LLM error.
+  - `failed`: Network fetch failed, scanner error, or another unrecoverable processing error. Gateway failures become completed `uncertain` review outcomes.
   - `skipped`: Unparseable SCM URL or file size exceeded `MAX_FILE_SIZE_KB`.
   - `pending`: Unfinished row from an interrupted run.
 - **`trufflehog_result`**:
@@ -320,9 +343,9 @@ The output CSV preserves **all original input columns** verbatim and appends 8 r
   - `not_detected`: Scanner completed and no detection overlapped the specified lines.
   - `ambiguous`: Detection evidence exists, but missing or overlapping location metadata prevents a safe one-to-one match.
 - **`llm_classification`**:
-  - `false_positive`: Code analysis indicates dummy, example, or invalid secret.
-  - `likely_secret`: Context indicates real credentials, tokens, or private keys.
-  - `uncertain`: Insufficient surrounding context to determine validity.
+  - `probable_false_positive`: Context resembles a placeholder, test fixture, example, or non-secret reference.
+  - `probable_secret`: Context suggests genuine or historical credential material, without claiming it is active.
+  - `uncertain`: Evidence is insufficient or conflicting.
 
 ---
 
@@ -371,7 +394,8 @@ npm run test:trufflehog-contract
 
 - `src/parsers/`: Discriminated union URL parsers for GitHub and Azure DevOps SCM links.
 - `src/fetcher/`: Multi-provider file downloader with concurrency control and size checks.
-- `src/llm/`: Claude client wrapper, prompt template builder, surrounding context extractor, and token cost calculator.
+- `src/ai-gateway/`: Provider-neutral OpenAI-compatible self-hosted gateway adapter.
+- `src/llm/`: Redaction, context assembly, evidence policy, prompts, constrained tools, contextual classification, and detector advice.
 - `src/trufflehog/`: Filesystem scanner executor and line-overlap matching algorithms.
 - `src/hybrid/`: Pure transition function state machine governing Hybrid flow execution.
 - `src/csv/`: Streaming CSV reader with fuzzy header discovery and atomic CSV writer.

@@ -8,8 +8,13 @@ import { loadConfig } from "../config.js";
 /** A complete valid set of environment variables. */
 const VALID_ENV: Record<string, string> = {
   FLOW: "hybrid",
-  ANTHROPIC_API_KEY: "sk-ant-test-key",
-  ANTHROPIC_MODEL: "claude-3-5-sonnet-20241022",
+  AI_GATEWAY_URL: "https://ai-gateway.internal",
+  AI_GATEWAY_MODEL: "security-context-model",
+  AI_GATEWAY_AUTH_TOKEN: "gateway-test-token",
+  LLM_CONTEXT_CLASSIFIER_ENABLED: "true",
+  LLM_DETECTOR_ADVISOR_ENABLED: "false",
+  LLM_MAX_CONTEXT_EXPANSIONS: "2",
+  LLM_MAX_CONTEXT_LINES: "150",
   MAX_TOKENS_PER_REQUEST: "4096",
   MAX_LLM_CALLS_PER_FILE: "3",
   GITHUB_PAT: "ghp_test_pat",
@@ -76,8 +81,9 @@ describe("loadConfig — valid configuration", () => {
     const config = loadConfig();
 
     expect(config.flow).toBe("hybrid");
-    expect(config.anthropicApiKey).toBe("sk-ant-test-key");
-    expect(config.anthropicModel).toBe("claude-3-5-sonnet-20241022");
+    expect(config.aiGatewayUrl).toBe("https://ai-gateway.internal");
+    expect(config.aiGatewayModel).toBe("security-context-model");
+    expect(config.aiGatewayAuthToken).toBe("gateway-test-token");
     expect(config.maxTokensPerRequest).toBe(4096);
     expect(config.maxLlmCallsPerFile).toBe(3);
     expect(config.githubPats).toEqual(["ghp_test_pat"]);
@@ -97,16 +103,17 @@ describe("loadConfig — valid configuration", () => {
   it("accepts FLOW=trufflehog-only", () => {
     withEnv({
       FLOW: "trufflehog-only",
-      ANTHROPIC_API_KEY: undefined,
-      ANTHROPIC_MODEL: undefined,
+      AI_GATEWAY_URL: undefined,
+      AI_GATEWAY_MODEL: undefined,
+      AI_GATEWAY_AUTH_TOKEN: undefined,
       MAX_TOKENS_PER_REQUEST: undefined,
       MAX_LLM_CALLS_PER_FILE: undefined,
     });
     expect(() => loadConfig()).not.toThrow();
     const config = loadConfig();
     expect(config.flow).toBe("trufflehog-only");
-    expect(config.anthropicApiKey).toBeUndefined();
-    expect(config.anthropicModel).toBeUndefined();
+    expect(config.aiGatewayUrl).toBeUndefined();
+    expect(config.aiGatewayModel).toBeUndefined();
   });
 
   it("accepts FLOW=llm-only", () => {
@@ -272,27 +279,63 @@ describe("loadConfig — invalid configuration", () => {
     expect(() => loadConfig()).toThrow(/GITHUB_PAT/);
   });
 
-  it("throws when ANTHROPIC_API_KEY is missing", () => {
-    withEnv({ ANTHROPIC_API_KEY: undefined });
+  it("throws when AI_GATEWAY_URL is missing", () => {
+    withEnv({ AI_GATEWAY_URL: undefined });
 
-    expect(() => loadConfig()).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => loadConfig()).toThrow(/AI_GATEWAY_URL/);
   });
 
   it("requires all LLM settings for hybrid and llm-only flows", () => {
     for (const flow of ["hybrid", "llm-only"] as const) {
       withEnv({
         FLOW: flow,
-        ANTHROPIC_API_KEY: undefined,
-        ANTHROPIC_MODEL: undefined,
+        AI_GATEWAY_URL: undefined,
+        AI_GATEWAY_MODEL: undefined,
         MAX_TOKENS_PER_REQUEST: undefined,
         MAX_LLM_CALLS_PER_FILE: undefined,
       });
 
-      expect(() => loadConfig()).toThrow(/ANTHROPIC_API_KEY/);
-      expect(() => loadConfig()).toThrow(/ANTHROPIC_MODEL/);
+      expect(() => loadConfig()).toThrow(/AI_GATEWAY_URL/);
+      expect(() => loadConfig()).toThrow(/AI_GATEWAY_MODEL/);
       expect(() => loadConfig()).toThrow(/MAX_TOKENS_PER_REQUEST/);
       expect(() => loadConfig()).toThrow(/MAX_LLM_CALLS_PER_FILE/);
     }
+  });
+
+  it("allows hybrid without gateway settings when contextual classification is disabled", () => {
+    withEnv({
+      FLOW: "hybrid",
+      LLM_CONTEXT_CLASSIFIER_ENABLED: "false",
+      AI_GATEWAY_URL: undefined,
+      AI_GATEWAY_MODEL: undefined,
+      MAX_TOKENS_PER_REQUEST: undefined,
+      MAX_LLM_CALLS_PER_FILE: undefined,
+    });
+
+    const config = loadConfig();
+    expect(config.llmContextClassifierEnabled).toBe(false);
+  });
+
+  it("does not allow llm-only when contextual classification is disabled", () => {
+    withEnv({
+      FLOW: "llm-only",
+      LLM_CONTEXT_CLASSIFIER_ENABLED: "false",
+    });
+    expect(() => loadConfig()).toThrow(/cannot be disabled/);
+  });
+
+  it("does not allow detector advice when contextual classification is disabled", () => {
+    withEnv({
+      FLOW: "hybrid",
+      LLM_CONTEXT_CLASSIFIER_ENABLED: "false",
+      LLM_DETECTOR_ADVISOR_ENABLED: "true",
+    });
+    expect(() => loadConfig()).toThrow(/Detector advice requires/);
+  });
+
+  it("rejects a non-HTTP AI Gateway URL", () => {
+    withEnv({ AI_GATEWAY_URL: "file:///tmp/gateway" });
+    expect(() => loadConfig()).toThrow(/absolute HTTP\(S\) URL/);
   });
 
   it("throws when FLOW has an invalid enum value", () => {

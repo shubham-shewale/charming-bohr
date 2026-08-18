@@ -110,14 +110,38 @@ const optionalPositiveInt = z
     return n;
   });
 
+function optionalBooleanString(defaultValue: boolean) {
+  return z
+    .string()
+    .optional()
+    .transform((val, ctx) => {
+      if (val === undefined || val.trim() === "") return defaultValue;
+      if (val === "true") return true;
+      if (val === "false") return false;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Expected "true" or "false" but got "${val}".`,
+      });
+      return z.NEVER;
+    });
+}
+
 const configSchema = z.object({
   FLOW: z.enum(["trufflehog-only", "llm-only", "hybrid"] as const, {
     errorMap: () => ({
       message: `Must be one of: "trufflehog-only", "llm-only", "hybrid".`,
     }),
   }),
-  ANTHROPIC_API_KEY: optionalTrimmedString,
-  ANTHROPIC_MODEL: optionalTrimmedString,
+  AI_GATEWAY_URL: optionalTrimmedString,
+  AI_GATEWAY_MODEL: optionalTrimmedString,
+  AI_GATEWAY_AUTH_TOKEN: optionalTrimmedString,
+  AI_GATEWAY_TIMEOUT_SECONDS: optionalRangedIntString(1, 30),
+  LLM_CONTEXT_CLASSIFIER_ENABLED: optionalBooleanString(true),
+  LLM_DETECTOR_ADVISOR_ENABLED: optionalBooleanString(false),
+  LLM_MAX_CONTEXT_EXPANSIONS: optionalRangedIntString(0, 2),
+  LLM_MAX_CONTEXT_LINES: optionalRangedIntString(1, 150),
+  LLM_PROMPT_PROFILE: z.literal("context-classifier-v1").optional().default("context-classifier-v1"),
+  LLM_DETECTOR_PROMPT_PROFILE: z.literal("detector-advisor-v1").optional().default("detector-advisor-v1"),
   MAX_TOKENS_PER_REQUEST: optionalPositiveInt,
   MAX_LLM_CALLS_PER_FILE: optionalPositiveInt,
   GITHUB_PAT: z
@@ -159,9 +183,40 @@ const configSchema = z.object({
 }).superRefine((env, ctx) => {
   if (env.FLOW === "trufflehog-only") return;
 
+  if (!env.LLM_CONTEXT_CLASSIFIER_ENABLED) {
+    if (env.LLM_DETECTOR_ADVISOR_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["LLM_DETECTOR_ADVISOR_ENABLED"],
+        message: "Detector advice requires LLM context classification.",
+      });
+    }
+    if (env.FLOW === "llm-only") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["LLM_CONTEXT_CLASSIFIER_ENABLED"],
+        message: "LLM context classification cannot be disabled when FLOW=llm-only.",
+      });
+    }
+    return;
+  }
+
+  if (env.AI_GATEWAY_URL) {
+    try {
+      const url = new URL(env.AI_GATEWAY_URL);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AI_GATEWAY_URL"],
+        message: "AI_GATEWAY_URL must be an absolute HTTP(S) URL.",
+      });
+    }
+  }
+
   const requiredLlmFields = [
-    ["ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY],
-    ["ANTHROPIC_MODEL", env.ANTHROPIC_MODEL],
+    ["AI_GATEWAY_URL", env.AI_GATEWAY_URL],
+    ["AI_GATEWAY_MODEL", env.AI_GATEWAY_MODEL],
     ["MAX_TOKENS_PER_REQUEST", env.MAX_TOKENS_PER_REQUEST],
     ["MAX_LLM_CALLS_PER_FILE", env.MAX_LLM_CALLS_PER_FILE],
   ] as const;
@@ -188,9 +243,19 @@ const configSchema = z.object({
  */
 export interface AppConfig {
   flow: Flow;
-  /** Required only for `llm-only` and `hybrid` flows. */
+  aiGatewayUrl?: string;
+  aiGatewayModel?: string;
+  aiGatewayAuthToken?: string;
+  aiGatewayTimeoutSeconds?: number;
+  llmContextClassifierEnabled?: boolean;
+  llmDetectorAdvisorEnabled?: boolean;
+  llmMaxContextExpansions?: number;
+  llmMaxContextLines?: number;
+  llmPromptProfile?: "context-classifier-v1";
+  llmDetectorPromptProfile?: "detector-advisor-v1";
+  /** @deprecated Test-only compatibility field; production uses aiGatewayAuthToken. */
   anthropicApiKey?: string;
-  /** Required only for `llm-only` and `hybrid` flows. */
+  /** @deprecated Test-only compatibility field; production uses aiGatewayModel. */
   anthropicModel?: string;
   /** Required only for `llm-only` and `hybrid` flows. */
   maxTokensPerRequest?: number;
@@ -246,8 +311,16 @@ export function loadConfig(): AppConfig {
 
   return {
     flow: env.FLOW,
-    anthropicApiKey: env.ANTHROPIC_API_KEY,
-    anthropicModel: env.ANTHROPIC_MODEL,
+    aiGatewayUrl: env.AI_GATEWAY_URL,
+    aiGatewayModel: env.AI_GATEWAY_MODEL,
+    aiGatewayAuthToken: env.AI_GATEWAY_AUTH_TOKEN,
+    aiGatewayTimeoutSeconds: env.AI_GATEWAY_TIMEOUT_SECONDS,
+    llmContextClassifierEnabled: env.LLM_CONTEXT_CLASSIFIER_ENABLED,
+    llmDetectorAdvisorEnabled: env.LLM_DETECTOR_ADVISOR_ENABLED,
+    llmMaxContextExpansions: env.LLM_MAX_CONTEXT_EXPANSIONS,
+    llmMaxContextLines: env.LLM_MAX_CONTEXT_LINES,
+    llmPromptProfile: env.LLM_PROMPT_PROFILE,
+    llmDetectorPromptProfile: env.LLM_DETECTOR_PROMPT_PROFILE,
     maxTokensPerRequest: env.MAX_TOKENS_PER_REQUEST,
     maxLlmCallsPerFile: env.MAX_LLM_CALLS_PER_FILE,
     githubPats: env.GITHUB_PAT,

@@ -4,13 +4,20 @@ import { parse } from "csv-parse";
 import { parseScmLink } from "../parsers/index.js";
 import type {
   CanonicalSource,
+  ContextEvidence,
+  DetectorGapAssessment,
+  EnvironmentScope,
+  ExposureScope,
+  FileRole,
   FileWorkItem,
   FindingRef,
   FindingResult,
   FindingStatus,
   LlmClassification,
+  PrincipalScope,
   ParseError,
   ScmParseResult,
+  SecretKind,
   TruffleHogResult,
 } from "../types.js";
 
@@ -298,9 +305,44 @@ export function buildNonPendingFindingResult(finding: FindingRef): FindingResult
   const rawDetector = getRaw("trufflehog_detector");
   const rawResult = getRaw("trufflehog_result");
   const rawReason = getRaw("llm_reason");
+  const rawEvidence = getRaw("llm_evidence");
+  const rawEvidenceStrength = getRaw("llm_evidence_strength");
+  const rawFileRole = getRaw("llm_file_role");
+  const rawEnvironment = getRaw("llm_environment");
+  const rawExposure = getRaw("llm_exposure_scope");
+  const rawPrincipal = getRaw("llm_principal_scope");
+  const rawSecretKind = getRaw("llm_secret_kind");
+  const rawDetectorProposal = getRaw("detector_gap_proposal");
+  const rawModel = getRaw("llm_model");
+  const rawPromptVersion = getRaw("llm_prompt_version");
   // Preserve resume compatibility with output written before the result model
   // renamed `not_found` to the more precise `not_detected` state.
   const normalizedTruffleHogResult = rawResult === "not_found" ? "not_detected" : rawResult;
+
+  let evidencePayload: {
+    evidence?: ContextEvidence[];
+    benignSignals?: string[];
+    riskSignals?: string[];
+    missingEvidence?: string[];
+  } = {};
+  try {
+    evidencePayload = rawEvidence ? JSON.parse(rawEvidence) : {};
+  } catch {
+    evidencePayload = {};
+  }
+
+  let detectorGapAssessment: DetectorGapAssessment | undefined;
+  try {
+    detectorGapAssessment = rawDetectorProposal
+      ? (JSON.parse(rawDetectorProposal) as DetectorGapAssessment)
+      : undefined;
+  } catch {
+    detectorGapAssessment = undefined;
+  }
+
+  const hasContextAssessment = Boolean(
+    rawFileRole || rawEnvironment || rawExposure || rawPrincipal || rawSecretKind
+  );
 
   return {
     findingRef: finding,
@@ -310,6 +352,32 @@ export function buildNonPendingFindingResult(finding: FindingRef): FindingResult
     llmClassification: (rawClassification as LlmClassification) || undefined,
     llmReason: rawReason,
     llmConfidence: rawConfidence ? Number(rawConfidence) : undefined,
+    contextAssessment: hasContextAssessment && rawClassification
+      ? {
+          classification: rawClassification === "probable_secret"
+            ? "probable_secret"
+            : rawClassification === "probable_false_positive"
+              ? "probable_false_positive"
+              : "uncertain",
+          fileRole: (rawFileRole as FileRole) || "unknown",
+          environment: (rawEnvironment as EnvironmentScope) || "unknown",
+          exposureScope: (rawExposure as ExposureScope) || "unknown",
+          principalScope: (rawPrincipal as PrincipalScope) || "unknown",
+          secretKind: (rawSecretKind as SecretKind) || "unknown",
+          evidenceStrength: rawEvidenceStrength === "strong" || rawEvidenceStrength === "moderate"
+            ? rawEvidenceStrength
+            : "weak",
+          confidence: rawConfidence ? Number(rawConfidence) : 0,
+          evidence: evidencePayload.evidence ?? [],
+          benignSignals: evidencePayload.benignSignals ?? [],
+          riskSignals: evidencePayload.riskSignals ?? [],
+          missingEvidence: evidencePayload.missingEvidence ?? [],
+          reason: rawReason,
+        }
+      : undefined,
+    detectorGapAssessment,
+    llmModel: rawModel || undefined,
+    llmPromptVersion: rawPromptVersion || undefined,
     error: rawError || finding.parseError?.message || "",
   };
 }
