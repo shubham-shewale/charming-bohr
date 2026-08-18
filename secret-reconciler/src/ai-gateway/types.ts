@@ -38,6 +38,8 @@ export interface AiGatewayResponse {
   usage?: {
     inputTokens: number;
     outputTokens: number;
+    /** Subset of inputTokens served from the gateway/model cache, when reported. */
+    cachedInputTokens?: number;
   };
 }
 

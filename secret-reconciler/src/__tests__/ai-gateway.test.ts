@@ -19,7 +19,11 @@ describe("OpenAiCompatibleGatewayClient", () => {
           }],
         },
       }],
-      usage: { prompt_tokens: 11, completion_tokens: 7 },
+      usage: {
+        prompt_tokens: 11,
+        completion_tokens: 7,
+        prompt_tokens_details: { cached_tokens: 5 },
+      },
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const client = new OpenAiCompatibleGatewayClient({
       baseUrl: "https://gateway.internal/",
@@ -48,7 +52,7 @@ describe("OpenAiCompatibleGatewayClient", () => {
     expect(result).toMatchObject({
       requestId: "gateway-request-1",
       model: "security-model-v1",
-      usage: { inputTokens: 11, outputTokens: 7 },
+      usage: { inputTokens: 11, outputTokens: 7, cachedInputTokens: 5 },
       toolCalls: [{ name: "submit_context_assessments", arguments: { assessments: [] } }],
     });
   });
@@ -77,5 +81,27 @@ describe("OpenAiCompatibleGatewayClient", () => {
       toolChoice: "required",
       maxTokens: 100,
     })).rejects.toThrow(/invalid JSON arguments/);
+  });
+
+  it("does not invent zero token usage when the gateway omits token counts", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "done" } }],
+      usage: {},
+    }), { status: 200 }));
+    const client = new OpenAiCompatibleGatewayClient({
+      baseUrl: "https://gateway.internal",
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    const result = await client.complete({
+      model: "model",
+      messages: [],
+      tools: [],
+      toolChoice: "auto",
+      maxTokens: 100,
+    });
+
+    expect(result.usage).toBeUndefined();
   });
 });

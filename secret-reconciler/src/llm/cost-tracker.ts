@@ -1,43 +1,81 @@
-/**
- * Configured accounting rates per 1M gateway tokens.
- * These defaults preserve the existing estimate until gateway-specific
- * accounting is introduced.
- */
-export const HAIKU_INPUT_COST_PER_MILLION = 0.25;
-export const HAIKU_OUTPUT_COST_PER_MILLION = 1.25;
+export interface TokenPricing {
+  inputCostPerMillionUsd?: number;
+  outputCostPerMillionUsd?: number;
+  cachedInputCostPerMillionUsd?: number;
+}
 
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
-  estimatedCostUsd: number;
+  cachedInputTokens: number;
+  llmCalls: number;
+  usageReportedCalls: number;
+  cacheReportedCalls: number;
+  /** Undefined when model pricing has not been configured. */
+  estimatedCostUsd?: number;
 }
 
 export class CostTracker {
   private inputTokens = 0;
   private outputTokens = 0;
+  private cachedInputTokens = 0;
+  private llmCalls = 0;
+  private usageReportedCalls = 0;
+  private cacheReportedCalls = 0;
+
+  constructor(private readonly pricing: TokenPricing = {}) {}
 
   /**
-   * Records usage from an LLM API call response.
+   * Records one completed LLM call. Token counts remain zero when the gateway
+   * did not include a usage object; the CLI reports that distinction.
    */
-  public addUsage(inputTokens: number, outputTokens: number): void {
-    this.inputTokens += Math.max(0, inputTokens);
+  public addUsage(
+    inputTokens?: number,
+    outputTokens?: number,
+    cachedInputTokens?: number
+  ): void {
+    this.llmCalls++;
+    if (inputTokens === undefined || outputTokens === undefined) return;
+
+    const safeInput = Math.max(0, inputTokens);
+    this.inputTokens += safeInput;
     this.outputTokens += Math.max(0, outputTokens);
+    this.cachedInputTokens += Math.min(safeInput, Math.max(0, cachedInputTokens ?? 0));
+    this.usageReportedCalls++;
+    if (cachedInputTokens !== undefined) this.cacheReportedCalls++;
   }
 
   public getUsage(): TokenUsage {
-    const inputCost = (this.inputTokens / 1_000_000) * HAIKU_INPUT_COST_PER_MILLION;
-    const outputCost = (this.outputTokens / 1_000_000) * HAIKU_OUTPUT_COST_PER_MILLION;
-    const totalCost = inputCost + outputCost;
+    const inputRate = this.pricing.inputCostPerMillionUsd;
+    const outputRate = this.pricing.outputCostPerMillionUsd;
+    let estimatedCostUsd: number | undefined;
+
+    if (inputRate !== undefined && outputRate !== undefined) {
+      const regularInputTokens = Math.max(0, this.inputTokens - this.cachedInputTokens);
+      const cachedInputRate = this.pricing.cachedInputCostPerMillionUsd ?? inputRate;
+      estimatedCostUsd =
+        (regularInputTokens / 1_000_000) * inputRate +
+        (this.cachedInputTokens / 1_000_000) * cachedInputRate +
+        (this.outputTokens / 1_000_000) * outputRate;
+    }
 
     return {
       inputTokens: this.inputTokens,
       outputTokens: this.outputTokens,
-      estimatedCostUsd: totalCost,
+      cachedInputTokens: this.cachedInputTokens,
+      llmCalls: this.llmCalls,
+      usageReportedCalls: this.usageReportedCalls,
+      cacheReportedCalls: this.cacheReportedCalls,
+      estimatedCostUsd,
     };
   }
 
   public reset(): void {
     this.inputTokens = 0;
     this.outputTokens = 0;
+    this.cachedInputTokens = 0;
+    this.llmCalls = 0;
+    this.usageReportedCalls = 0;
+    this.cacheReportedCalls = 0;
   }
 }

@@ -90,7 +90,10 @@ describe("ClaudeAnalyzer", () => {
       },
     };
 
-    const costTracker = new CostTracker();
+    const costTracker = new CostTracker({
+      inputCostPerMillionUsd: 1,
+      outputCostPerMillionUsd: 2,
+    });
     const analyzer = new ClaudeAnalyzer({
       config: defaultConfig,
       anthropicClient: mockClient,
@@ -111,6 +114,8 @@ describe("ClaudeAnalyzer", () => {
     const usage = costTracker.getUsage();
     expect(usage.inputTokens).toBe(150);
     expect(usage.outputTokens).toBe(50);
+    expect(usage.llmCalls).toBe(1);
+    expect(usage.usageReportedCalls).toBe(1);
     expect(usage.estimatedCostUsd).toBeGreaterThan(0);
   });
 

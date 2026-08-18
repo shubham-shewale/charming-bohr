@@ -34,7 +34,7 @@
 - 🔒 **Gateway Guardrails**: Redacts suspected values, uses forced schema-validated tool calls, caps path-only confidence, and restricts context expansion to the same fetched file.
 - 🔄 **Output-as-Input Resume**: Directly re-feed an output CSV to resume interrupted jobs or retry failed rows without separate checkpoint files.
 - 🛡️ **Graceful Cancellation**: Intercepts `SIGINT` / `SIGTERM` signals to finish in-flight requests and flush an uncorrupted CSV before exiting.
-- 💰 **Cost & Token Tracking**: Real-time progress updates tracking input/output tokens and estimated USD expenditure.
+- 💰 **Concise Usage Tracking**: Throttled progress shows gateway-reported input, output, and cached-input tokens plus configured cost estimates without printing one line per record.
 
 ---
 
@@ -160,6 +160,9 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `AI_GATEWAY_MODEL` | String | `security-context-model` | Conditional | Gateway model identifier. |
 | `AI_GATEWAY_AUTH_TOKEN` | String | `...` | *Optional* | Bearer token; omit for other gateway authentication mechanisms. |
 | `AI_GATEWAY_TIMEOUT_SECONDS` | Integer | `30` | *Optional* | Per-request timeout. |
+| `AI_GATEWAY_INPUT_COST_PER_MILLION_USD` | Number | `1.25` | *Optional* | Input-token price for the configured model. Cost is `n/a` unless both input and output prices are set. |
+| `AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD` | Number | `10.00` | *Optional* | Output-token price for the configured model. |
+| `AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD` | Number | `0.125` | *Optional* | Cached-input price. Defaults to the normal input price when omitted. |
 | `LLM_CONTEXT_CLASSIFIER_ENABLED` | Boolean | `true` | *Optional* | When false in Hybrid, unresolved findings become `uncertain` without a gateway request. Cannot be false for `llm-only`. |
 | `LLM_DETECTOR_ADVISOR_ENABLED` | Boolean | `false` | *Optional* | Enables review-only detector advice for `not_detected + probable_secret`. |
 | `LLM_MAX_CONTEXT_EXPANSIONS` | Integer | `2` | *Optional* | Maximum bounded context tool calls per batch. |
@@ -208,6 +211,8 @@ secret-reconciler [options] <csv...>
 | `--keep-files` | *(boolean)* | Prevent deletion of downloaded source files for manual inspection. | `false` |
 | `--help` | `-h` | Display help screen and option descriptions. | — |
 | `--version` | `-V` | Output version number. | `0.1.0` |
+
+The terminal displays a single throttled status line in interactive runs and one status snapshot every 30 seconds in non-interactive runs. Token counts come only from the gateway response. Cached input is displayed only when the gateway returns `usage.prompt_tokens_details.cached_tokens`; otherwise it is shown as `n/a`.
 
 ### Common Usage Examples
 

@@ -105,9 +105,57 @@ program
 
     // ── 5. Progress Reporting ────────────────────────────────────────────────
     let lastProgressLen = 0;
+    let lastProgressAt = 0;
+    let latestProgress: PipelineProgress | undefined;
     const isInteractive = Boolean(process.stdout.isTTY);
+    const progressIntervalMs = isInteractive ? 1_000 : 30_000;
+
+    const compactNumber = (value: number): string => {
+      if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+      if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+      return String(value);
+    };
+
+    const buildProgressLine = (progress: PipelineProgress): string => {
+      const percent = progress.totalFindings > 0
+        ? (progress.findingsProcessed / progress.totalFindings) * 100
+        : 100;
+      const workStatus = `[run] ${percent.toFixed(1)}% files=${progress.filesProcessed}/${progress.totalFiles} findings=${progress.findingsProcessed}/${progress.totalFindings} ok=${progress.findingsCompleted} skip=${progress.findingsSkipped} fail=${progress.findingsFailed}`;
+      if (
+        effectiveConfig.flow === "trufflehog-only" ||
+        effectiveConfig.llmContextClassifierEnabled === false
+      ) {
+        return workStatus;
+      }
+      const cacheTokens = progress.cacheReportedCalls > 0
+        ? compactNumber(progress.cachedInputTokens)
+        : "n/a";
+      const cost = progress.estimatedCostUsd === undefined
+        ? "n/a"
+        : `$${progress.estimatedCostUsd.toFixed(4)}`;
+      const usageSuffix = progress.usageReportedCalls < progress.llmCalls
+        ? ` usage=${progress.usageReportedCalls}/${progress.llmCalls}`
+        : "";
+
+      return `${workStatus} | llm=${progress.llmCalls} in=${compactNumber(progress.inputTokens)} out=${compactNumber(progress.outputTokens)} cache=${cacheTokens} cost=${cost}${usageSuffix}`;
+    };
+
+    const renderProgress = (progress: PipelineProgress, force = false) => {
+      const now = Date.now();
+      if (!force && lastProgressAt > 0 && now - lastProgressAt < progressIntervalMs) return;
+
+      const line = buildProgressLine(progress);
+      lastProgressAt = now;
+      if (isInteractive) {
+        process.stdout.write(`\r${line.padEnd(lastProgressLen, " ")}`);
+        lastProgressLen = line.length;
+      } else {
+        process.stdout.write(`${line}\n`);
+      }
+    };
 
     const clearProgressLine = () => {
+      if (latestProgress) renderProgress(latestProgress, true);
       if (isInteractive && lastProgressLen > 0) {
         process.stdout.write("\n");
         lastProgressLen = 0;
@@ -115,13 +163,8 @@ program
     };
 
     const onProgress = (progress: PipelineProgress) => {
-      const line = `[Progress] Files: ${progress.filesProcessed}/${progress.totalFiles} | Findings: ${progress.findingsCompleted}/${progress.totalFindings} | Tokens: ${progress.tokensUsed} | Cost: $${progress.estimatedCostUsd.toFixed(4)}`;
-      if (isInteractive) {
-        process.stdout.write(`\r${line.padEnd(lastProgressLen, " ")}`);
-        lastProgressLen = line.length;
-      } else {
-        console.log(line);
-      }
+      latestProgress = progress;
+      renderProgress(progress);
     };
 
     const printSummaryMetrics = (pipelineSummary: PipelineSummary) => {
@@ -147,7 +190,15 @@ program
         if (effectiveConfig.flow === "hybrid" || effectiveConfig.flow === "llm-only") {
           console.log(`  Context Classifications: Probable False Positives: ${pipelineSummary.falsePositive}, Probable Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
           if (pipelineSummary.tokenUsage) {
-            console.log(`  Token Usage: Input: ${pipelineSummary.tokenUsage.inputTokens}, Output: ${pipelineSummary.tokenUsage.outputTokens}, Estimated Cost: $${pipelineSummary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
+            const usage = pipelineSummary.tokenUsage;
+            const cache = usage.cacheReportedCalls > 0 ? String(usage.cachedInputTokens) : "not reported";
+            const cost = usage.estimatedCostUsd === undefined
+              ? "not configured"
+              : `$${usage.estimatedCostUsd.toFixed(6)}`;
+            console.log(`  LLM Usage: Calls: ${usage.llmCalls}, Input: ${usage.inputTokens}, Output: ${usage.outputTokens}, Cached Input: ${cache}, Estimated Cost: ${cost}`);
+            if (usage.usageReportedCalls < usage.llmCalls) {
+              console.log(`  Usage Coverage: ${usage.usageReportedCalls}/${usage.llmCalls} calls returned token usage`);
+            }
           }
         }
       }

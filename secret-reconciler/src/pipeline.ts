@@ -33,12 +33,19 @@ import { executeHybridFlow } from "./hybrid/state-machine.js";
 export interface PipelineProgress {
   filesProcessed: number;
   totalFiles: number;
+  findingsProcessed: number;
   findingsCompleted: number;
+  findingsSkipped: number;
+  findingsFailed: number;
   totalFindings: number;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
+  llmCalls: number;
+  usageReportedCalls: number;
+  cacheReportedCalls: number;
   tokensUsed: number;
-  estimatedCostUsd: number;
+  estimatedCostUsd?: number;
 }
 
 export interface PipelineOptions {
@@ -82,7 +89,11 @@ export interface PipelineSummary {
   tokenUsage?: {
     inputTokens: number;
     outputTokens: number;
-    estimatedCostUsd: number;
+    cachedInputTokens: number;
+    llmCalls: number;
+    usageReportedCalls: number;
+    cacheReportedCalls: number;
+    estimatedCostUsd?: number;
   };
   results: FindingResult[];
 }
@@ -258,7 +269,11 @@ export async function runPipeline(
     fetchProvider: options.fetchProvider,
   });
 
-  const costTracker = new CostTracker();
+  const costTracker = new CostTracker({
+    inputCostPerMillionUsd: config.aiGatewayInputCostPerMillionUsd,
+    outputCostPerMillionUsd: config.aiGatewayOutputCostPerMillionUsd,
+    cachedInputCostPerMillionUsd: config.aiGatewayCachedInputCostPerMillionUsd,
+  });
   const contextualAnalyzer = config.flow === "trufflehog-only" || config.llmContextClassifierEnabled === false
     ? undefined
     : new ContextualSecretAnalyzer({
@@ -329,6 +344,8 @@ export async function runPipeline(
   const processedResultsMap = new Map<FindingRef, FindingResult>();
   let filesProcessed = 0;
   let findingsCompleted = allFindings.filter((f) => f.initialStatus === "completed").length;
+  let findingsSkipped = allFindings.filter((f) => f.initialStatus === "skipped").length;
+  let findingsFailed = allFindings.filter((f) => f.initialStatus === "failed").length;
   const totalFiles = workMap.size;
   const totalFindings = allFindings.length;
 
@@ -338,10 +355,17 @@ export async function runPipeline(
       options.onProgress({
         filesProcessed,
         totalFiles,
+        findingsProcessed: findingsCompleted + findingsSkipped + findingsFailed,
         findingsCompleted,
+        findingsSkipped,
+        findingsFailed,
         totalFindings,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        llmCalls: usage.llmCalls,
+        usageReportedCalls: usage.usageReportedCalls,
+        cacheReportedCalls: usage.cacheReportedCalls,
         tokensUsed: usage.inputTokens + usage.outputTokens,
         estimatedCostUsd: usage.estimatedCostUsd,
       });
@@ -351,6 +375,8 @@ export async function runPipeline(
   const onFileDone = (results: FindingResult[]) => {
     for (const res of results) {
       if (res.status === "completed") findingsCompleted++;
+      else if (res.status === "skipped") findingsSkipped++;
+      else if (res.status === "failed") findingsFailed++;
     }
     filesProcessed++;
     reportProgress();
@@ -409,9 +435,7 @@ export async function runPipeline(
   if (deferredItems.length > 0) {
     const earliestReset = tokenPool.getEarliestReset();
     const resetTime = earliestReset > 0 ? new Date(earliestReset * 1000).toISOString() : "unknown";
-    console.log(
-      `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
-    );
+    console.log(`[warn] event=github_rate_limit deferred=${deferredItems.length} reset=${resetTime}`);
   }
 
   while (deferredItems.length > 0 && retryPass < maxRetries && !isAborted) {
@@ -421,11 +445,9 @@ export async function runPipeline(
     const resetTime = earliestReset > 0 ? new Date(earliestReset * 1000).toISOString() : "unknown";
 
     if (retryPass > 0) {
-      console.log(
-        `GitHub rate limit hit — deferred ${deferredItems.length} items, retrying after reset at ${resetTime}`
-      );
+      console.log(`[warn] event=github_rate_limit deferred=${deferredItems.length} reset=${resetTime}`);
     }
-    console.log(`Sleeping ${Math.ceil(sleepSeconds)}s until GitHub rate limit resets...`);
+    console.log(`[wait] event=github_rate_limit seconds=${Math.ceil(sleepSeconds)} reset=${resetTime}`);
 
     await sleepFn(sleepSeconds * 1000);
     tokenPool.resetBlockedState();

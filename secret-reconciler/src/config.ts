@@ -110,6 +110,23 @@ const optionalPositiveInt = z
     return n;
   });
 
+/** Parses an optional non-negative decimal, used for per-million token prices. */
+const optionalNonNegativeNumber = z
+  .string()
+  .optional()
+  .transform((val, ctx) => {
+    if (val === undefined || val.trim() === "") return undefined;
+    const n = Number(val);
+    if (!Number.isFinite(n) || n < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Expected a non-negative number but got "${val}".`,
+      });
+      return z.NEVER;
+    }
+    return n;
+  });
+
 function optionalBooleanString(defaultValue: boolean) {
   return z
     .string()
@@ -136,6 +153,9 @@ const configSchema = z.object({
   AI_GATEWAY_MODEL: optionalTrimmedString,
   AI_GATEWAY_AUTH_TOKEN: optionalTrimmedString,
   AI_GATEWAY_TIMEOUT_SECONDS: optionalRangedIntString(1, 30),
+  AI_GATEWAY_INPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
+  AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
+  AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
   LLM_CONTEXT_CLASSIFIER_ENABLED: optionalBooleanString(true),
   LLM_DETECTOR_ADVISOR_ENABLED: optionalBooleanString(false),
   LLM_MAX_CONTEXT_EXPANSIONS: optionalRangedIntString(0, 2),
@@ -247,6 +267,9 @@ export interface AppConfig {
   aiGatewayModel?: string;
   aiGatewayAuthToken?: string;
   aiGatewayTimeoutSeconds?: number;
+  aiGatewayInputCostPerMillionUsd?: number;
+  aiGatewayOutputCostPerMillionUsd?: number;
+  aiGatewayCachedInputCostPerMillionUsd?: number;
   llmContextClassifierEnabled?: boolean;
   llmDetectorAdvisorEnabled?: boolean;
   llmMaxContextExpansions?: number;
@@ -315,6 +338,9 @@ export function loadConfig(): AppConfig {
     aiGatewayModel: env.AI_GATEWAY_MODEL,
     aiGatewayAuthToken: env.AI_GATEWAY_AUTH_TOKEN,
     aiGatewayTimeoutSeconds: env.AI_GATEWAY_TIMEOUT_SECONDS,
+    aiGatewayInputCostPerMillionUsd: env.AI_GATEWAY_INPUT_COST_PER_MILLION_USD,
+    aiGatewayOutputCostPerMillionUsd: env.AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD,
+    aiGatewayCachedInputCostPerMillionUsd: env.AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD,
     llmContextClassifierEnabled: env.LLM_CONTEXT_CLASSIFIER_ENABLED,
     llmDetectorAdvisorEnabled: env.LLM_DETECTOR_ADVISOR_ENABLED,
     llmMaxContextExpansions: env.LLM_MAX_CONTEXT_EXPANSIONS,

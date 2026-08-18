@@ -11,6 +11,9 @@ const VALID_ENV: Record<string, string> = {
   AI_GATEWAY_URL: "https://ai-gateway.internal",
   AI_GATEWAY_MODEL: "security-context-model",
   AI_GATEWAY_AUTH_TOKEN: "gateway-test-token",
+  AI_GATEWAY_INPUT_COST_PER_MILLION_USD: "1.25",
+  AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD: "10",
+  AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD: "0.125",
   LLM_CONTEXT_CLASSIFIER_ENABLED: "true",
   LLM_DETECTOR_ADVISOR_ENABLED: "false",
   LLM_MAX_CONTEXT_EXPANSIONS: "2",
@@ -84,6 +87,9 @@ describe("loadConfig — valid configuration", () => {
     expect(config.aiGatewayUrl).toBe("https://ai-gateway.internal");
     expect(config.aiGatewayModel).toBe("security-context-model");
     expect(config.aiGatewayAuthToken).toBe("gateway-test-token");
+    expect(config.aiGatewayInputCostPerMillionUsd).toBe(1.25);
+    expect(config.aiGatewayOutputCostPerMillionUsd).toBe(10);
+    expect(config.aiGatewayCachedInputCostPerMillionUsd).toBe(0.125);
     expect(config.maxTokensPerRequest).toBe(4096);
     expect(config.maxLlmCallsPerFile).toBe(3);
     expect(config.githubPats).toEqual(["ghp_test_pat"]);
@@ -98,6 +104,11 @@ describe("loadConfig — valid configuration", () => {
     withEnv({ CLEANUP_TEMP_FILES: "false" });
     const config = loadConfig();
     expect(config.cleanupTempFiles).toBe(false);
+  });
+
+  it("rejects negative gateway token prices", () => {
+    withEnv({ AI_GATEWAY_INPUT_COST_PER_MILLION_USD: "-1" });
+    expect(() => loadConfig()).toThrow(/non-negative number/);
   });
 
   it("accepts FLOW=trufflehog-only", () => {

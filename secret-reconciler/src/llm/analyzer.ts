@@ -287,9 +287,11 @@ export class ContextualSecretAnalyzer {
   }
 
   private recordUsage(response: AiGatewayResponse): void {
-    if (response.usage) {
-      this.costTracker.addUsage(response.usage.inputTokens, response.usage.outputTokens);
-    }
+    this.costTracker.addUsage(
+      response.usage?.inputTokens,
+      response.usage?.outputTokens,
+      response.usage?.cachedInputTokens
+    );
   }
 
   private async analyzeBatch(

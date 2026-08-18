@@ -21,6 +21,8 @@ describe("Polish: Progress, Filename & Cleanup Tests", () => {
     flow: "trufflehog-only",
     anthropicApiKey: "dummy-key",
     anthropicModel: "claude-3-5-sonnet",
+    aiGatewayInputCostPerMillionUsd: 1,
+    aiGatewayOutputCostPerMillionUsd: 2,
     maxTokensPerRequest: 1000,
     maxLlmCallsPerFile: 3,
     githubPats: ["dummy-github-pat"],
@@ -114,6 +116,12 @@ rule-2,https://github.com/my-org/my-repo/blob/${sha}/src/file2.js#L1-L5,medium
     expect(lastProgress.filesProcessed).toBe(2);
     expect(lastProgress.totalFiles).toBe(2);
     expect(lastProgress.findingsCompleted).toBe(2);
+    expect(lastProgress.findingsProcessed).toBe(2);
+    expect(lastProgress.findingsSkipped).toBe(0);
+    expect(lastProgress.findingsFailed).toBe(0);
+    expect(lastProgress.llmCalls).toBe(2);
+    expect(lastProgress.cachedInputTokens).toBe(0);
+    expect(lastProgress.cacheReportedCalls).toBe(0);
     expect(lastProgress.totalFindings).toBe(2);
     expect(lastProgress.tokensUsed).toBe(400); // 2 files * (150 in + 50 out)
     expect(lastProgress.estimatedCostUsd).toBeGreaterThan(0);

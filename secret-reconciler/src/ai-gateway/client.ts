@@ -33,6 +33,9 @@ interface OpenAiGatewayPayload {
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -120,16 +123,21 @@ export class OpenAiCompatibleGatewayClient implements AiGatewayClientLike {
       const payload = (await response.json()) as OpenAiGatewayPayload;
       const message = payload.choices?.[0]?.message;
       if (!message) throw new Error("AI Gateway response did not contain a message");
+      const usage = payload.usage;
+      const hasTokenUsage =
+        typeof usage?.prompt_tokens === "number" &&
+        typeof usage.completion_tokens === "number";
 
       return {
         toolCalls: (message.tool_calls ?? []).map(parseToolCall),
         content: message.content ?? undefined,
         model: payload.model,
         requestId: payload.id,
-        usage: payload.usage
+        usage: hasTokenUsage
           ? {
-              inputTokens: payload.usage.prompt_tokens ?? 0,
-              outputTokens: payload.usage.completion_tokens ?? 0,
+              inputTokens: usage.prompt_tokens!,
+              outputTokens: usage.completion_tokens!,
+              cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
             }
           : undefined,
       };
