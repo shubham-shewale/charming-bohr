@@ -72,7 +72,7 @@ const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // line 15
     expect(summary.totalFindings).toBe(3);
     expect(summary.completed).toBe(2);
     expect(summary.verified).toBe(1);
-    expect(summary.notFound).toBe(1);
+    expect(summary.notDetected).toBe(1);
     expect(summary.skipped).toBe(1);
     expect(summary.failed).toBe(0);
 
@@ -96,7 +96,7 @@ const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // line 15
     // Row 2: rule-clean
     expect(rows[1]["Rule ID"]).toBe("rule-clean");
     expect(rows[1]["status"]).toBe("completed");
-    expect(rows[1]["trufflehog_result"]).toBe("not_found");
+    expect(rows[1]["trufflehog_result"]).toBe("not_detected");
     expect(rows[1]["trufflehog_detector"]).toBe("");
     expect(rows[1]["error"]).toBe("");
 
@@ -141,11 +141,13 @@ const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // line 15
     });
 
     expect(capturedArgs[0]).toBe("filesystem");
-    expect(capturedArgs[1]).toBe("--file");
-    expect(capturedArgs[2]).toContain("index.js");
-    expect(capturedArgs[3]).toBe("--json");
-    expect(capturedArgs[4]).toBe("--no-verification");
-    expect(capturedArgs[5]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
+    expect(capturedArgs[1]).toContain("index.js");
+    expect(capturedArgs[2]).toBe("--json");
+    expect(capturedArgs[3]).toBe("--results=verified,unverified,unknown");
+    expect(capturedArgs[4]).toBe("--no-update");
+    expect(capturedArgs[5]).toBe("--fail-on-scan-errors");
+    expect(capturedArgs[6]).toBe("--no-verification");
+    expect(capturedArgs[7]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
     expect(capturedOptions.timeout).toBe(120000);
     expect(summary.completed).toBe(1);
     expect(summary.unverified).toBe(1);

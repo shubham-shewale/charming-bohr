@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "test": "vitest run",
+    "test:trufflehog-contract": "TRUFFLEHOG_CONTRACT_TEST=1 vitest run src/__tests__/trufflehog-contract.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

@@ -4,20 +4,58 @@ import type { TruffleHogDetection, TruffleHogVerificationMode } from "../types.j
 
 const execFileAsync = promisify(execFile);
 
+/** Runtime version whose CLI and JSON contract this adapter is tested against. */
+export const SUPPORTED_TRUFFLEHOG_VERSION = "3.97.0";
+
+export type TruffleHogExecutor = (
+  command: string,
+  args: string[],
+  options: { timeout?: number }
+) => Promise<{ stdout: string; stderr: string }>;
+
 export interface RunTruffleHogOptions {
   verificationMode?: TruffleHogVerificationMode;
   userAgentSuffix?: string;
+  configPath?: string;
   timeoutMs?: number;
   /** Custom executor override for testing. */
-  execFn?: (
-    command: string,
-    args: string[],
-    options: { timeout?: number }
-  ) => Promise<{ stdout: string; stderr: string }>;
+  execFn?: TruffleHogExecutor;
 }
 
 /**
- * Runs TruffleHog filesystem scan on a local file: `trufflehog filesystem --file {path} --json`
+ * Verifies that the installed CLI matches the version whose output contract is
+ * implemented by this adapter. Call once during application startup.
+ */
+export async function assertSupportedTruffleHogVersion(
+  options: Pick<RunTruffleHogOptions, "execFn" | "timeoutMs"> = {}
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const executor = options.execFn ?? (async (cmd, args, opts) => {
+    return await execFileAsync(cmd, args, opts);
+  });
+
+  let stdout: string;
+  try {
+    const result = await executor("trufflehog", ["--version"], { timeout: timeoutMs });
+    stdout = result.stdout.trim();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Unable to determine TruffleHog version: ${message}`);
+  }
+
+  const versionMatch = stdout.match(/\b(\d+\.\d+\.\d+)\b/);
+  const actualVersion = versionMatch?.[1];
+  if (actualVersion !== SUPPORTED_TRUFFLEHOG_VERSION) {
+    const reportedVersion = actualVersion ?? (stdout || "unknown");
+    throw new Error(
+      `Unsupported TruffleHog version "${reportedVersion}". ` +
+        `Expected ${SUPPORTED_TRUFFLEHOG_VERSION}.`
+    );
+  }
+}
+
+/**
+ * Runs TruffleHog filesystem scan on a local file: `trufflehog filesystem {path} --json`.
  * Parses stdout JSON lines into {@link TruffleHogDetection} items.
  */
 export async function runTruffleHog(
@@ -29,12 +67,21 @@ export async function runTruffleHog(
     return await execFileAsync(cmd, args, opts);
   });
 
-  const args = ["filesystem", "--file", filePath, "--json"];
+  const args = [
+    "filesystem",
+    filePath,
+    "--json",
+    "--results=verified,unverified,unknown",
+    "--no-update",
+    "--fail-on-scan-errors",
+  ];
 
-  if (options.verificationMode === "verified-only") {
-    args.push("--only-verified");
-  } else if (options.verificationMode === "no-verification") {
+  if (options.verificationMode === "no-verification") {
     args.push("--no-verification");
+  }
+
+  if (options.configPath && options.configPath.trim().length > 0) {
+    args.push(`--config=${options.configPath.trim()}`);
   }
 
   if (options.userAgentSuffix && options.userAgentSuffix.trim().length > 0) {
@@ -69,16 +116,13 @@ export async function runTruffleHog(
       throw new Error(`TruffleHog process timed out after ${seconds}s`);
     }
 
-    // TruffleHog may return stdout along with exit code or error
-    if (errorObj && typeof errorObj.stdout === "string" && errorObj.stdout.trim().length > 0) {
-      stdout = errorObj.stdout;
-    } else {
-      const stderrMsg = errorObj && typeof errorObj.stderr === "string" && errorObj.stderr.trim().length > 0
-        ? `: ${errorObj.stderr.trim()}`
-        : "";
-      const errMsg = errorObj?.message || String(err);
-      throw new Error(`TruffleHog execution failed: ${errMsg}${stderrMsg}`);
-    }
+    // A non-zero process can contain partial stdout. Never treat partial scan
+    // output as a successful complete result.
+    const stderrMsg = errorObj && typeof errorObj.stderr === "string" && errorObj.stderr.trim().length > 0
+      ? `: ${errorObj.stderr.trim()}`
+      : "";
+    const errMsg = errorObj?.message || String(err);
+    throw new Error(`TruffleHog execution failed: ${errMsg}${stderrMsg}`);
   }
 
   return parseTruffleHogOutput(stdout);
@@ -92,18 +136,44 @@ export function parseTruffleHogOutput(stdout: string): TruffleHogDetection[] {
 
   const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
     try {
-      const record = JSON.parse(line);
+      const parsed: unknown = JSON.parse(line);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("expected a JSON object");
+      }
+      const record = parsed as Record<string, any>;
 
       const detectorName =
         record.DetectorName ||
         record.DetectorType ||
         record.Detector ||
-        record.detector_name ||
-        "Unknown";
+        record.detector_name;
 
-      const verified = Boolean(record.Verified ?? record.verified);
+      if (typeof detectorName !== "string" || detectorName.trim().length === 0) {
+        throw new Error("missing detector name");
+      }
+
+      const verified = record.Verified ?? record.verified;
+      if (typeof verified !== "boolean") {
+        throw new Error("missing boolean Verified field");
+      }
+
+      const verificationError =
+        record.VerificationError ??
+        record.verification_error ??
+        record.verificationError;
+      const hasVerificationError =
+        verificationError !== undefined &&
+        verificationError !== null &&
+        (typeof verificationError !== "string" || verificationError.trim().length > 0);
+
+      const verificationStatus = verified
+        ? "verified"
+        : hasVerificationError
+          ? "unknown"
+          : "unverified";
 
       // Extract line numbers from SourceMetadata or top-level properties
       const fsData = record.SourceMetadata?.Data?.Filesystem;
@@ -122,25 +192,27 @@ export function parseTruffleHogOutput(stdout: string): TruffleHogDetection[] {
         record.end_line ??
         lineStart;
 
-      if (typeof lineStart === "string") lineStart = parseInt(lineStart, 10);
-      if (typeof lineEnd === "string") lineEnd = parseInt(lineEnd, 10);
+      const parsePositiveLine = (value: unknown): number | undefined => {
+        const parsedValue = typeof value === "string" ? Number.parseInt(value, 10) : value;
+        return typeof parsedValue === "number" && Number.isInteger(parsedValue) && parsedValue > 0
+          ? parsedValue
+          : undefined;
+      };
 
-      if (typeof lineStart !== "number" || isNaN(lineStart) || lineStart <= 0) {
-        lineStart = 1;
-        lineEnd = Number.MAX_SAFE_INTEGER;
-      } else if (typeof lineEnd !== "number" || isNaN(lineEnd) || lineEnd <= 0) {
-        lineEnd = lineStart;
-      }
+      lineStart = parsePositiveLine(lineStart);
+      lineEnd = parsePositiveLine(lineEnd);
+      if (lineStart !== undefined && lineEnd === undefined) lineEnd = lineStart;
+      if (lineStart === undefined) lineEnd = undefined;
 
       detections.push({
-        detectorName: String(detectorName),
-        verified,
+        detectorName: detectorName.trim(),
+        verificationStatus,
         lineStart,
         lineEnd,
-        raw: record.Raw || record.Redacted || undefined,
       });
-    } catch {
-      // Ignore unparseable non-JSON stdout lines
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid TruffleHog JSON output at line ${index + 1}: ${reason}`);
     }
   }
 

@@ -16,7 +16,9 @@ This repository provides an automated reconciliation tool that:
    - **`llm-only`**: Deep semantic code context analysis using Claude 3.5 Sonnet to distinguish false positives from real secrets.
    - **`hybrid`**: Cost-effective dual-stage pipeline (LLM triage first; automatic escalation to TruffleHog only for uncertain or likely secrets).
 4. **Fine-Grained TruffleHog Execution Controls**:
-   - `TRUFFLEHOG_VERIFICATION_MODE`: Choose between `"all"` (default), `"verified-only"`, and `"no-verification"` (for rapid offline scanning).
+   - Pinned TruffleHog `3.97.0` runtime contract with startup validation.
+   - `TRUFFLEHOG_VERIFICATION_MODE`: Choose between `"all"` (default) and `"no-verification"` (for rapid offline scanning).
+   - `TRUFFLEHOG_CONFIG_PATH`: Load custom detector and verifier definitions from YAML.
    - `TRUFFLEHOG_USER_AGENT_SUFFIX`: Custom audit identifier appended to scanner requests for log attribution.
    - `TRUFFLEHOG_TIMEOUT_SECONDS`: Operator-configured subprocess timeout with clear diagnostic reporting.
 5. **Supports Resumable & Incremental Execution** by treating the output CSV as valid input, auto-skipping completed rows, and supporting selective failure retries.
@@ -37,7 +39,7 @@ All modules, CLI flags, output columns, and logs strictly adhere to the domain l
 | **Flow** | The classification strategy: `trufflehog-only`, `llm-only`, or `hybrid`. |
 | **Status** | The processing state in the output CSV: `completed`, `failed`, `skipped`, or `pending`. |
 | **LLM Classification** | The three-valued semantic assessment: `false_positive`, `likely_secret`, or `uncertain`. |
-| **TruffleHog Result** | The scanner outcome: `verified`, `unverified`, or `not_found`. |
+| **TruffleHog Result** | The lossless scanner outcome: `verified`, `unverified`, `unknown`, `not_detected`, or `ambiguous`. |
 
 ---
 

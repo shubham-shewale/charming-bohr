@@ -3,17 +3,19 @@ import {
   type FindingRef,
   type FindingResult,
   type TruffleHogDetection,
-  type TruffleHogResult,
 } from "../types.js";
 import { buildNonPendingFindingResult } from "../csv/reader.js";
 
 /**
- * Matches TruffleHog detections back to finding references by line-range overlap.
+ * Matches TruffleHog detections back to finding references conservatively.
  *
  * Overlap condition:
  * detection.lineStart <= finding.lineEnd && detection.lineEnd >= finding.lineStart
  *
- * Produces a {@link FindingResult} for each finding in the list.
+ * Line overlap is accepted only when it produces a one-to-one correlation.
+ * Missing location metadata, one detection overlapping multiple findings, or
+ * multiple detections overlapping one finding produces `ambiguous` instead of
+ * guessing.
  */
 export function matchDetectionsToFindings(
   findings: FindingRef[],
@@ -37,30 +39,68 @@ export function matchDetectionsToFindings(
 
     const { lineStart: fStart, lineEnd: fEnd } = finding.canonicalSource;
 
-    // Find detections whose line range overlaps with the finding's line range
-    const matches = detections.filter(
-      (d) => d.lineStart <= fEnd && d.lineEnd >= fStart
+    const locatedDetections = detections.filter(
+      (d) => d.lineStart !== undefined && d.lineEnd !== undefined
+    );
+    const hasLocationlessDetection = locatedDetections.length !== detections.length;
+
+    if (hasLocationlessDetection) {
+      return {
+        findingRef: finding,
+        status: "completed",
+        trufflehogResult: "ambiguous",
+        trufflehogDetector: "",
+        error: "TruffleHog detection is missing source location metadata",
+      };
+    }
+
+    // Find detections whose line range overlaps with the finding's line range.
+    const matches = locatedDetections.filter(
+      (d) => d.lineStart! <= fEnd && d.lineEnd! >= fStart
     );
 
     if (matches.length === 0) {
       return {
         findingRef: finding,
         status: "completed",
-        trufflehogResult: "not_found",
+        trufflehogResult: "not_detected",
         trufflehogDetector: "",
         error: "",
       };
     }
 
-    const hasVerified = matches.some((d) => d.verified);
-    const trufflehogResult: TruffleHogResult = hasVerified ? "verified" : "unverified";
-    const uniqueDetectors = Array.from(new Set(matches.map((d) => d.detectorName))).join(", ");
+    if (matches.length > 1) {
+      return {
+        findingRef: finding,
+        status: "completed",
+        trufflehogResult: "ambiguous",
+        trufflehogDetector: Array.from(new Set(matches.map((d) => d.detectorName))).join(", "),
+        error: "Multiple TruffleHog detections overlap this finding",
+      };
+    }
+
+    const match = matches[0]!;
+    const competingFindings = findings.filter((candidate) => {
+      if (candidate.initialStatus !== "pending" || !candidate.canonicalSource) return false;
+      const candidateSource = candidate.canonicalSource;
+      return match.lineStart! <= candidateSource.lineEnd && match.lineEnd! >= candidateSource.lineStart;
+    });
+
+    if (competingFindings.length > 1) {
+      return {
+        findingRef: finding,
+        status: "completed",
+        trufflehogResult: "ambiguous",
+        trufflehogDetector: match.detectorName,
+        error: "One TruffleHog detection overlaps multiple findings",
+      };
+    }
 
     return {
       findingRef: finding,
       status: "completed",
-      trufflehogResult,
-      trufflehogDetector: uniqueDetectors,
+      trufflehogResult: match.verificationStatus,
+      trufflehogDetector: match.detectorName,
       error: "",
     };
   });

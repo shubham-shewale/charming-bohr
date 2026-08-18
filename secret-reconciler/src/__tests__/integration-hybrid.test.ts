@@ -295,7 +295,7 @@ const MAL = "some-key"; // 62
     expect(summary.uncertain).toBe(1);
     expect(summary.likelySecret).toBe(1);
     expect(summary.unverified).toBe(1);
-    expect(summary.notFound).toBe(1);
+    expect(summary.notDetected).toBe(1);
     expect(summary.llmInvalidOutput).toBe(1);
 
     // TruffleHog was invoked once for this file (because rule-unc and rule-likely needed it)
@@ -319,14 +319,14 @@ const MAL = "some-key"; // 62
       error: "",
     });
 
-    // Row 1: uncertain -> TruffleHog found nothing -> not_found
+    // Row 1: uncertain -> TruffleHog found nothing -> not_detected
     expect(records[1]).toMatchObject({
       "Rule ID": "rule-unc",
       status: "completed",
       llm_classification: "uncertain",
       llm_reason: "Custom auth header format unknown",
       llm_confidence: "0.55",
-      trufflehog_result: "not_found",
+      trufflehog_result: "not_detected",
       trufflehog_detector: "",
       error: "",
     });
@@ -420,7 +420,7 @@ rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15
 
     const scannedFiles: string[] = [];
     const mockTruffleHogExec = vi.fn().mockImplementation(async (cmd, args) => {
-      const fileArg = args[args.indexOf("--file") + 1];
+      const fileArg = args[1];
       scannedFiles.push(fileArg);
       return {
         stdout: JSON.stringify({
@@ -532,11 +532,13 @@ rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15
 
     expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
     expect(capturedArgs[0]).toBe("filesystem");
-    expect(capturedArgs[1]).toBe("--file");
-    expect(capturedArgs[2]).toContain("auth.js");
-    expect(capturedArgs[3]).toBe("--json");
-    expect(capturedArgs[4]).toBe("--no-verification");
-    expect(capturedArgs[5]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
+    expect(capturedArgs[1]).toContain("auth.js");
+    expect(capturedArgs[2]).toBe("--json");
+    expect(capturedArgs[3]).toBe("--results=verified,unverified,unknown");
+    expect(capturedArgs[4]).toBe("--no-update");
+    expect(capturedArgs[5]).toBe("--fail-on-scan-errors");
+    expect(capturedArgs[6]).toBe("--no-verification");
+    expect(capturedArgs[7]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
     expect(capturedOptions.timeout).toBe(90000);
 
     expect(summary.completed).toBe(1);

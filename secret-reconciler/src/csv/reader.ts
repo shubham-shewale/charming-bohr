@@ -298,11 +298,14 @@ export function buildNonPendingFindingResult(finding: FindingRef): FindingResult
   const rawDetector = getRaw("trufflehog_detector");
   const rawResult = getRaw("trufflehog_result");
   const rawReason = getRaw("llm_reason");
+  // Preserve resume compatibility with output written before the result model
+  // renamed `not_found` to the more precise `not_detected` state.
+  const normalizedTruffleHogResult = rawResult === "not_found" ? "not_detected" : rawResult;
 
   return {
     findingRef: finding,
     status: finding.initialStatus,
-    trufflehogResult: (rawResult as TruffleHogResult) || "",
+    trufflehogResult: (normalizedTruffleHogResult as TruffleHogResult) || "",
     trufflehogDetector: rawDetector,
     llmClassification: (rawClassification as LlmClassification) || undefined,
     llmReason: rawReason,

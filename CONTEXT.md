@@ -49,7 +49,7 @@ The three-valued result of LLM analysis: `false_positive`, `likely_secret`, or `
 _Avoid_: Verdict, judgment
 
 **TruffleHog Result**:
-The outcome of running TruffleHog on a fetched file: `verified`, `unverified`, or `not_found`.
+The lossless outcome of running TruffleHog on a finding: `verified`, `unverified`, `unknown`, `not_detected`, or `ambiguous`. `unknown` represents a verifier operational error; `ambiguous` represents unsafe detection-to-finding correlation.
 _Avoid_: TruffleHog status, verification result
 
 **File Work Item**:
@@ -73,4 +73,3 @@ _Avoid_: Rule selector, policy gate
 **Finding Limit**:
 An optional configuration bounding the active reconciliation batch to the first N pending findings. Unselected findings beyond the limit are preserved in the output CSV with status `pending`.
 _Avoid_: Batch cap, row slice
-

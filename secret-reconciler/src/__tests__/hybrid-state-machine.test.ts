@@ -269,7 +269,7 @@ describe("Hybrid State Machine & Flow", () => {
         llmClassification: "uncertain",
         llmReason: "Hard to tell without runtime values",
         llmConfidence: 0.5,
-        trufflehogResult: "not_found",
+        trufflehogResult: "not_detected",
         trufflehogDetector: "",
       });
     });
@@ -359,12 +359,12 @@ describe("Hybrid State Machine & Flow", () => {
         error: "",
       });
 
-      // 2. Uncertain -> completed, TruffleHog not_found
+      // 2. Uncertain -> completed, TruffleHog not_detected
       expect(results[1]).toMatchObject({
         findingRef: fUncertain,
         status: "completed",
         llmClassification: "uncertain",
-        trufflehogResult: "not_found",
+        trufflehogResult: "not_detected",
         trufflehogDetector: "",
         error: "",
       });
@@ -501,9 +501,11 @@ describe("Hybrid State Machine & Flow", () => {
       expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
       expect(capturedArgs).toEqual([
         "filesystem",
-        "--file",
         "/path/to/file.js",
         "--json",
+        "--results=verified,unverified,unknown",
+        "--no-update",
+        "--fail-on-scan-errors",
         "--no-verification",
         "--user-agent-suffix=SecurityTeamAudit-2026",
       ]);

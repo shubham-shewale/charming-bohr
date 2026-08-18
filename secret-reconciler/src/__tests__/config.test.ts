@@ -132,17 +132,20 @@ describe("loadConfig — valid configuration", () => {
     expect(config.trufflehogVerificationMode).toBe("all");
     expect(config.trufflehogTimeoutSeconds).toBe(60);
     expect(config.trufflehogUserAgentSuffix).toBeUndefined();
+    expect(config.trufflehogConfigPath).toBeUndefined();
   });
 
   it("parses valid TRUFFLEHOG_VERIFICATION_MODE values", () => {
-    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "verified-only" });
-    expect(loadConfig().trufflehogVerificationMode).toBe("verified-only");
-
     withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "no-verification" });
     expect(loadConfig().trufflehogVerificationMode).toBe("no-verification");
 
     withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "all" });
     expect(loadConfig().trufflehogVerificationMode).toBe("all");
+  });
+
+  it("rejects verified-only because it discards unverified and unknown detections", () => {
+    withEnv({ TRUFFLEHOG_VERIFICATION_MODE: "verified-only" });
+    expect(() => loadConfig()).toThrow('Must be one of: "all", "no-verification".');
   });
 
   it("parses valid TRUFFLEHOG_TIMEOUT_SECONDS integers", () => {
@@ -165,6 +168,14 @@ describe("loadConfig — valid configuration", () => {
 
     withEnv({ TRUFFLEHOG_USER_AGENT_SUFFIX: "   " });
     expect(loadConfig().trufflehogUserAgentSuffix).toBeUndefined();
+  });
+
+  it("normalizes and trims TRUFFLEHOG_CONFIG_PATH", () => {
+    withEnv({ TRUFFLEHOG_CONFIG_PATH: "  /etc/trufflehog/custom.yaml  " });
+    expect(loadConfig().trufflehogConfigPath).toBe("/etc/trufflehog/custom.yaml");
+
+    withEnv({ TRUFFLEHOG_CONFIG_PATH: "   " });
+    expect(loadConfig().trufflehogConfigPath).toBeUndefined();
   });
 
   it("parses comma-separated GITHUB_PAT into an array of trimmed tokens", () => {

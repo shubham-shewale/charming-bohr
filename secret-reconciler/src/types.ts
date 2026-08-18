@@ -70,16 +70,26 @@ export type FindingStatus = "completed" | "failed" | "skipped" | "pending";
 /**
  * Verification mode for TruffleHog scanning.
  * - "all": Performs live API verification and outputs both verified and unverified findings.
- * - "verified-only": Only outputs confirmed live credentials.
  * - "no-verification": Disables network calls and reports all detections as unverified.
  */
-export type TruffleHogVerificationMode = "all" | "verified-only" | "no-verification";
+export type TruffleHogVerificationMode = "all" | "no-verification";
+
+/**
+ * Lossless verification state reported for an individual TruffleHog detection.
+ * `unknown` means verification was attempted but could not complete because of
+ * an operational error (for example, a network or upstream API failure).
+ */
+export type TruffleHogDetectionStatus = "verified" | "unverified" | "unknown";
 
 /**
  * Result outcome of running TruffleHog analysis on a finding's line range.
  * @see CONTEXT.md — TruffleHog Result
  */
-export type TruffleHogResult = "verified" | "unverified" | "not_found" | "";
+export type TruffleHogResult =
+  | TruffleHogDetectionStatus
+  | "not_detected"
+  | "ambiguous"
+  | "";
 
 /**
  * A normalized finding referenced from an input CSV row.
@@ -123,10 +133,11 @@ export interface FileWorkItem {
  */
 export interface TruffleHogDetection {
   detectorName: string;
-  verified: boolean;
-  lineStart: number;
-  lineEnd: number;
-  raw?: string;
+  verificationStatus: TruffleHogDetectionStatus;
+  /** 1-based source line. Missing when TruffleHog did not provide safe location metadata. */
+  lineStart?: number;
+  /** 1-based source line. Missing when TruffleHog did not provide safe location metadata. */
+  lineEnd?: number;
 }
 
 /**
@@ -151,5 +162,3 @@ export interface FindingResult {
   llmConfidence?: number;
   error?: string;
 }
-
-

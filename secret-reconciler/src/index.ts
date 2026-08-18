@@ -133,10 +133,10 @@ program
       }
       if (!pipelineSummary.interrupted) {
         if (effectiveConfig.flow === "trufflehog-only") {
-          console.log(`  TruffleHog: Completed: ${pipelineSummary.completed} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
+          console.log(`  TruffleHog: Completed: ${pipelineSummary.completed} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Unknown: ${pipelineSummary.unknown}, Not Detected: ${pipelineSummary.notDetected}, Ambiguous: ${pipelineSummary.ambiguous})`);
         } else if (effectiveConfig.flow === "hybrid") {
-          const thScanned = pipelineSummary.verified + pipelineSummary.unverified + pipelineSummary.notFound;
-          console.log(`  TruffleHog: Scanned: ${thScanned} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
+          const thScanned = pipelineSummary.verified + pipelineSummary.unverified + pipelineSummary.unknown + pipelineSummary.notDetected + pipelineSummary.ambiguous;
+          console.log(`  TruffleHog: Scanned: ${thScanned} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Unknown: ${pipelineSummary.unknown}, Not Detected: ${pipelineSummary.notDetected}, Ambiguous: ${pipelineSummary.ambiguous})`);
         }
 
         if (effectiveConfig.flow === "hybrid" || effectiveConfig.flow === "llm-only") {

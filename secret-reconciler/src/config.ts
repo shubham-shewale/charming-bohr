@@ -144,15 +144,16 @@ const configSchema = z.object({
   SURROUNDING_LINES: rangedIntString(0),
   CLEANUP_TEMP_FILES: booleanString,
   TRUFFLEHOG_VERIFICATION_MODE: z
-    .enum(["all", "verified-only", "no-verification"] as const, {
+    .enum(["all", "no-verification"] as const, {
       errorMap: () => ({
-        message: `Must be one of: "all", "verified-only", "no-verification".`,
+        message: `Must be one of: "all", "no-verification".`,
       }),
     })
     .optional()
     .default("all"),
   TRUFFLEHOG_TIMEOUT_SECONDS: optionalRangedIntString(1, 60),
   TRUFFLEHOG_USER_AGENT_SUFFIX: optionalTrimmedString,
+  TRUFFLEHOG_CONFIG_PATH: optionalTrimmedString,
   CHECK_IDS: optionalCheckIds,
   LIMIT: optionalPositiveInt,
 });
@@ -182,6 +183,8 @@ export interface AppConfig {
   trufflehogVerificationMode: TruffleHogVerificationMode;
   trufflehogTimeoutSeconds: number;
   trufflehogUserAgentSuffix?: string;
+  /** Optional YAML file containing custom TruffleHog detectors and verifiers. */
+  trufflehogConfigPath?: string;
   /** Maximum number of defer-and-retry passes when the GitHub rate limit is hit. Default 2. */
   githubRateLimitMaxRetries: number;
   /** Optional filter to restrict reconciliation to specific Check IDs. */
@@ -233,6 +236,7 @@ export function loadConfig(): AppConfig {
     trufflehogVerificationMode: env.TRUFFLEHOG_VERIFICATION_MODE,
     trufflehogTimeoutSeconds: env.TRUFFLEHOG_TIMEOUT_SECONDS,
     trufflehogUserAgentSuffix: env.TRUFFLEHOG_USER_AGENT_SUFFIX,
+    trufflehogConfigPath: env.TRUFFLEHOG_CONFIG_PATH,
     githubRateLimitMaxRetries: env.GITHUB_RATE_LIMIT_MAX_RETRIES,
     checkIds: env.CHECK_IDS,
     limit: env.LIMIT,

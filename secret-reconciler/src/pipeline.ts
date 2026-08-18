@@ -13,7 +13,11 @@ import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { GitHubRateLimitError } from "./providers/github-provider.js";
 import { TokenPool } from "./providers/token-pool.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
-import { runTruffleHog, type RunTruffleHogOptions } from "./trufflehog/runner.js";
+import {
+  assertSupportedTruffleHogVersion,
+  runTruffleHog,
+  type RunTruffleHogOptions,
+} from "./trufflehog/runner.js";
 import {
   type CanonicalSource,
   type FileWorkItem,
@@ -61,7 +65,9 @@ export interface PipelineSummary {
   completed: number;
   verified: number;
   unverified: number;
-  notFound: number;
+  unknown: number;
+  notDetected: number;
+  ambiguous: number;
   falsePositive: number;
   likelySecret: number;
   uncertain: number;
@@ -220,8 +226,17 @@ export async function runPipeline(
     execFn: options.trufflehogExecFn,
     verificationMode: config.trufflehogVerificationMode,
     userAgentSuffix: config.trufflehogUserAgentSuffix,
+    configPath: config.trufflehogConfigPath,
     timeoutMs: config.trufflehogTimeoutSeconds * 1000,
   };
+
+  // Validate the real CLI once at startup. Test executors are explicit contract
+  // doubles and are validated independently by runner unit tests.
+  if (config.flow !== "llm-only" && !options.trufflehogExecFn) {
+    await assertSupportedTruffleHogVersion({
+      timeoutMs: config.trufflehogTimeoutSeconds * 1000,
+    });
+  }
 
   // Determine output path
   let outputPath = options.output;
@@ -456,7 +471,9 @@ export async function runPipeline(
   let completed = 0;
   let verified = 0;
   let unverified = 0;
-  let notFound = 0;
+  let unknown = 0;
+  let notDetected = 0;
+  let ambiguous = 0;
   let falsePositive = 0;
   let likelySecret = 0;
   let uncertain = 0;
@@ -470,7 +487,9 @@ export async function runPipeline(
       completed++;
       if (res.trufflehogResult === "verified") verified++;
       else if (res.trufflehogResult === "unverified") unverified++;
-      else if (res.trufflehogResult === "not_found") notFound++;
+      else if (res.trufflehogResult === "unknown") unknown++;
+      else if (res.trufflehogResult === "not_detected") notDetected++;
+      else if (res.trufflehogResult === "ambiguous") ambiguous++;
 
       if (res.llmClassification === "false_positive") falsePositive++;
       else if (res.llmClassification === "likely_secret") likelySecret++;
@@ -497,7 +516,9 @@ export async function runPipeline(
     completed,
     verified,
     unverified,
-    notFound,
+    unknown,
+    notDetected,
+    ambiguous,
     falsePositive,
     likelySecret,
     uncertain,

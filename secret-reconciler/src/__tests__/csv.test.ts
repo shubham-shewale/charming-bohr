@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { readFindingsCsv, groupFindingsByContentIdentity, mergeHeaders } from "../csv/reader.js";
+import {
+  buildNonPendingFindingResult,
+  readFindingsCsv,
+  groupFindingsByContentIdentity,
+  mergeHeaders,
+} from "../csv/reader.js";
 import { writeResultsCsv } from "../csv/writer.js";
 import type { FindingResult } from "../types.js";
 
@@ -77,6 +82,18 @@ rule-03,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e
     expect(resultRetry.findings[0]!.initialStatus).toBe("completed");
     expect(resultRetry.findings[1]!.initialStatus).toBe("pending"); // retried
     expect(resultRetry.findings[2]!.initialStatus).toBe("pending");
+  });
+
+  it("normalizes legacy not_found results when resuming older output", async () => {
+    const csvPath = path.join(tmpDir, "legacy-resume.csv");
+    const content = `Rule ID,SCM Link,status,trufflehog_result
+rule-01,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/file1.js#L10,completed,not_found
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const { findings } = await readFindingsCsv(csvPath);
+    const result = buildNonPendingFindingResult(findings[0]!);
+    expect(result.trufflehogResult).toBe("not_detected");
   });
 
   it("always re-processes findings with status=skipped, status=pending, or empty status", async () => {
