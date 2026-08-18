@@ -1,0 +1,33 @@
+{
+  "name": "secret-reconciler",
+  "version": "0.1.0",
+  "description": "CLI tool to process secret-scanner findings, fetch source code, and classify each finding.",
+  "type": "module",
+  "bin": {
+    "secret-reconciler": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "commander": "^12.1.0",
+    "csv-parse": "^7.0.2",
+    "csv-stringify": "^6.8.3",
+    "dotenv": "^16.4.7",
+    "p-limit": "^7.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
