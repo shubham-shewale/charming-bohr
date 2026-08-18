@@ -76,6 +76,40 @@ function optionalRangedIntString(min: number, defaultValue: number) {
 }
 
 
+/**
+ * Optional string transformer that trims whitespace, splits by comma, and returns undefined if empty.
+ */
+const optionalCheckIds = z
+  .string()
+  .optional()
+  .transform((val) => {
+    if (val === undefined || val.trim().length === 0) return undefined;
+    const tokens = val
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    return tokens.length > 0 ? tokens : undefined;
+  });
+
+/**
+ * Coerces an optional string to a positive integer (>= 1), returning undefined when omitted or empty.
+ */
+const optionalPositiveInt = z
+  .string()
+  .optional()
+  .transform((val, ctx) => {
+    if (val === undefined || val.trim() === "") return undefined;
+    const n = Number(val);
+    if (!Number.isInteger(n) || n < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Expected a positive integer (>= 1) but got "${val}".`,
+      });
+      return z.NEVER;
+    }
+    return n;
+  });
+
 const configSchema = z.object({
   FLOW: z.enum(["trufflehog-only", "llm-only", "hybrid"] as const, {
     errorMap: () => ({
@@ -119,6 +153,8 @@ const configSchema = z.object({
     .default("all"),
   TRUFFLEHOG_TIMEOUT_SECONDS: optionalRangedIntString(1, 60),
   TRUFFLEHOG_USER_AGENT_SUFFIX: optionalTrimmedString,
+  CHECK_IDS: optionalCheckIds,
+  LIMIT: optionalPositiveInt,
 });
 
 
@@ -148,6 +184,10 @@ export interface AppConfig {
   trufflehogUserAgentSuffix?: string;
   /** Maximum number of defer-and-retry passes when the GitHub rate limit is hit. Default 2. */
   githubRateLimitMaxRetries: number;
+  /** Optional filter to restrict reconciliation to specific Check IDs. */
+  checkIds?: string[];
+  /** Optional limit on the number of pending findings to process. */
+  limit?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +234,8 @@ export function loadConfig(): AppConfig {
     trufflehogTimeoutSeconds: env.TRUFFLEHOG_TIMEOUT_SECONDS,
     trufflehogUserAgentSuffix: env.TRUFFLEHOG_USER_AGENT_SUFFIX,
     githubRateLimitMaxRetries: env.GITHUB_RATE_LIMIT_MAX_RETRIES,
+    checkIds: env.CHECK_IDS,
+    limit: env.LIMIT,
   };
 }
 

@@ -166,6 +166,8 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `TRUFFLEHOG_VERIFICATION_MODE` | Enum | `all` | *Optional* | Verification mode: `all` (default), `verified-only`, or `no-verification`. |
 | `TRUFFLEHOG_TIMEOUT_SECONDS` | Integer | `60` | *Optional* | Subprocess timeout for TruffleHog scans in seconds (>= 1, default `60`). |
 | `TRUFFLEHOG_USER_AGENT_SUFFIX` | String | `...` | *Optional* | Custom suffix appended to TruffleHog outgoing verification HTTP requests. |
+| `CHECK_IDS` | String | `CKV_SECRET_6,CKV_AWS_1` | *Optional* | Comma-separated list of Check IDs to reconcile (default: all). |
+| `LIMIT` | Integer | `100` | *Optional* | Maximum number of pending findings to process in this run (>= 1, default: unlimited). |
 | `CONCURRENCY` | Integer | `5` | **Yes** | Number of file work items processed concurrently (>= 1). |
 | `MAX_FILE_SIZE_KB` | Integer | `500` | **Yes** | Maximum file size in KB to download and analyze (>= 1). |
 | `SURROUNDING_LINES` | Integer | `10` | **Yes** | Lines of code context included above and below each finding (>= 0). |
@@ -176,7 +178,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 ## Analysis Flows
 
 | Flow | Strengths | Ideal For | LLM Used? | Scanner Used? |
-| :--- | :--- | :--- | :---: | :---: |
+| :--- | :--- | :--- | :--- | :--- |
 | **`hybrid`** *(Recommended)* | Balances deep semantic reasoning with cryptographic verification while keeping API costs low. | Production scans containing thousands of mixed alerts. | ✅ (Triage) | ✅ (Conditional) |
 | **`llm-only`** | Best for understanding complex code context, documentation, mock tests, and template files. | Eliminating false positives where regex scanners trigger on test fixtures. | ✅ | ❌ |
 | **`trufflehog-only`** | Ultra-fast, zero API cost, validates live detector endpoints. | Quick verification runs without external LLM dependencies. | ❌ | ✅ |
@@ -194,6 +196,8 @@ secret-reconciler [options] <csv...>
 | Option | Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
 | `--output` | `-o <path>` | Custom destination path for the reconciled output CSV. | `results-YYYYMMDDTHHMM.csv` |
+| `--check-ids` | `<ids...>` | Filter findings by one or more Check IDs (comma or space separated). | `(all)` |
+| `--limit` | `-n <count>` | Limit reconciliation to the first N pending findings. | `(unlimited)` |
 | `--retry-failed` | *(boolean)* | Re-process rows previously marked with `status=failed`. | `false` |
 | `--keep-files` | *(boolean)* | Prevent deletion of downloaded source files for manual inspection. | `false` |
 | `--help` | `-h` | Display help screen and option descriptions. | — |
@@ -206,25 +210,43 @@ secret-reconciler [options] <csv...>
 npm run dev -- ./data/github-findings.csv
 ```
 
-#### 2. Multi-CSV Merge Run
+#### 2. Filter by Specific Check IDs
+Target only specific detection rules (e.g. `CKV_SECRET_6` or `CKV_AWS_1`), preserving all other rows in `pending` status:
+```bash
+npm run dev -- ./data/findings.csv --check-ids CKV_SECRET_6 CKV_AWS_1
+```
+
+#### 3. Bounded Batch Run (Finding Limit)
+Process only the first 50 pending findings to save tokens or test configuration changes:
+```bash
+npm run dev -- ./data/findings.csv -n 50
+```
+
+#### 4. Combined Filter and Limit
+Apply Check ID filtering first, then bound to a batch of 100 matching findings:
+```bash
+npm run dev -- ./data/findings.csv --check-ids CKV_SECRET_6 -n 100 -o ./batch-ckv6.csv
+```
+
+#### 5. Multi-CSV Merge Run
 Processes multiple scanner exports (e.g. GitHub and Azure DevOps), unifies all columns, and records original filenames in `source_file`:
 ```bash
 npm run dev -- ./data/github-findings.csv ./data/ado-findings.csv -o ./reconciled-all.csv
 ```
 
-#### 3. Resume an Interrupted Job
+#### 6. Resume an Interrupted Job
 If a previous run was stopped or partially processed, simply pass the generated output CSV back as input. Completed rows will be skipped automatically:
 ```bash
 npm run dev -- ./reconciled-all.csv -o ./reconciled-all.csv
 ```
 
-#### 4. Retry Failed Rows
+#### 7. Retry Failed Rows
 To re-attempt network errors, API timeouts, or rate limits for failed rows:
 ```bash
 npm run dev -- ./reconciled-all.csv --retry-failed -o ./reconciled-all.csv
 ```
 
-#### 5. Debugging & File Retention
+#### 8. Debugging & File Retention
 Retain downloaded files in the operating system temp directory to inspect exact file content:
 ```bash
 npm run dev -- ./data/findings.csv --keep-files

@@ -138,6 +138,33 @@ function findSourceFileHeader(headers: string[]): string | undefined {
 }
 
 /**
+ * Finds the header name matching Check ID across common column variants.
+ */
+export function findCheckIdHeader(headers: string[]): string | undefined {
+  const normalized = headers.map((h) => ({ original: h, norm: normalizeHeader(h) }));
+
+  const candidateNorms = [
+    "checkid",
+    "checkids",
+    "ruleid",
+    "ruleids",
+    "policyid",
+    "policyids",
+    "checkname",
+    "rulename",
+    "policyname",
+    "policynames",
+  ];
+
+  for (const cand of candidateNorms) {
+    const found = normalized.find((item) => item.norm === cand);
+    if (found) return found.original;
+  }
+
+  return undefined;
+}
+
+/**
  * Stream-reads a CSV file, dynamically discovers headers, parses SCM links,
  * and normalizes rows into {@link FindingRef} objects.
  */
@@ -161,6 +188,7 @@ export async function readFindingsCsv(
   let scmHeader: string | undefined;
   let statusHeader: string | undefined;
   let sourceFileHeader: string | undefined;
+  let checkIdHeader: string | undefined;
   let rowIndex = 0;
 
   for await (const record of parser) {
@@ -169,6 +197,7 @@ export async function readFindingsCsv(
       scmHeader = findScmLinkHeader(rawHeaders);
       statusHeader = findStatusHeader(rawHeaders);
       sourceFileHeader = findSourceFileHeader(rawHeaders);
+      checkIdHeader = findCheckIdHeader(rawHeaders);
       headers = rawHeaders.filter((h) => !isDroppedColumn(h));
     }
 
@@ -197,6 +226,14 @@ export async function readFindingsCsv(
     let sourceFile = path.basename(filePath);
     if (sourceFileHeader && record[sourceFileHeader] && (record[sourceFileHeader] as string).trim()) {
       sourceFile = (record[sourceFileHeader] as string).trim();
+    }
+
+    let checkId: string | undefined;
+    if (checkIdHeader && record[checkIdHeader]) {
+      const val = (record[checkIdHeader] as string).trim();
+      if (val.length > 0) {
+        checkId = val;
+      }
     }
 
     const rawUrl = scmHeader ? (record[scmHeader] as string) : undefined;
@@ -228,6 +265,7 @@ export async function readFindingsCsv(
     findings.push({
       rowIndex,
       sourceFile,
+      checkId,
       rawRow,
       canonicalSource,
       parseError,

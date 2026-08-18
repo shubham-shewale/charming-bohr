@@ -56,6 +56,8 @@ export interface PipelineOptions {
 export interface PipelineSummary {
   outputPath: string;
   totalFindings: number;
+  matchedCheckIds: number;
+  selectedFindings: number;
   completed: number;
   verified: number;
   unverified: number;
@@ -260,8 +262,36 @@ export async function runPipeline(
 
   const mergedHeaders = mergeHeaders(...sourceFileHeadersList);
 
-  // Group pending findings by Content Identity
-  const workMap = groupFindingsByContentIdentity(allFindings);
+  // ── Evaluate Check ID filtering and finding limits ────────────────────────
+  const normalizedCheckIds =
+    config.checkIds && config.checkIds.length > 0
+      ? new Set(config.checkIds.map((id) => id.trim().toLowerCase()))
+      : undefined;
+
+  const isCheckIdMatch = (finding: FindingRef): boolean => {
+    if (!normalizedCheckIds) return true;
+    if (!finding.checkId) return false;
+    return normalizedCheckIds.has(finding.checkId.trim().toLowerCase());
+  };
+
+  // 1. Filter findings matching active Check IDs
+  const matchedFindings = allFindings.filter(isCheckIdMatch);
+  const matchedCheckIds = matchedFindings.length;
+
+  // 2. Select up to LIMIT pending findings from matched findings
+  const candidatePendingFindings = matchedFindings.filter(
+    (f) => f.initialStatus === "pending"
+  );
+
+  const selectedPendingFindings =
+    config.limit !== undefined && config.limit > 0
+      ? candidatePendingFindings.slice(0, config.limit)
+      : candidatePendingFindings;
+
+  const selectedFindings = selectedPendingFindings.length;
+
+  // Group only selected pending findings by Content Identity
+  const workMap = groupFindingsByContentIdentity(selectedPendingFindings);
 
   // Setup bounded concurrency and cancellation tracking
   const limit = pLimit(config.concurrency);
@@ -462,6 +492,8 @@ export async function runPipeline(
   return {
     outputPath,
     totalFindings: finalResults.length,
+    matchedCheckIds,
+    selectedFindings,
     completed,
     verified,
     unverified,

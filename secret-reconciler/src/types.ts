@@ -90,6 +90,8 @@ export interface FindingRef {
   rowIndex: number;
   /** Name or path of the source CSV file this finding originated from. */
   sourceFile: string;
+  /** Policy or rule identifier if present in the input CSV (e.g. CKV_SECRET_6). */
+  checkId?: string;
   /** Map of column header to string value representing the original CSV row verbatim. */
   rawRow: Record<string, string>;
   /** The parsed SCM canonical source, if parsing succeeded. */

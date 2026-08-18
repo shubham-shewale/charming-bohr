@@ -65,3 +65,12 @@ _Avoid_: State, result
 **Source File**:
 The input CSV filename a finding originated from. Used to track provenance in the merged output.
 _Avoid_: Input file, origin
+
+**Check ID Filter**:
+An optional configuration that restricts active reconciliation to findings matching one or more specific Check IDs / Rule IDs. Non-matching findings are preserved in the output CSV with status `pending`.
+_Avoid_: Rule selector, policy gate
+
+**Finding Limit**:
+An optional configuration bounding the active reconciliation batch to the first N pending findings. Unselected findings beyond the limit are preserved in the output CSV with status `pending`.
+_Avoid_: Batch cap, row slice
+

@@ -302,4 +302,43 @@ https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20,123456,sec-te
       "Suppressed By": "alice",
     });
   });
+
+  it("extracts Check ID across multiple header variants (Check ID, Rule ID, Policy ID, check_id, rule_name)", async () => {
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+
+    const testCases = [
+      { header: "Check ID", value: "CKV_SECRET_6" },
+      { header: "check_id", value: "CKV_AWS_1" },
+      { header: "Rule ID", value: "rule-123" },
+      { header: "rule_id", value: "rule-456" },
+      { header: "Policy ID", value: "POL-001" },
+      { header: "policy_id", value: "POL-002" },
+      { header: "check_name", value: "CKV_GCP_1" },
+      { header: "Rule Name", value: "rule_name_test" },
+      { header: "policy_name", value: "pol_name_test" },
+    ];
+
+    for (const { header, value } of testCases) {
+      const csvPath = path.join(tmpDir, `check_id_${header.replace(/\s+/g, "_")}.csv`);
+      const content = `${header},SCM Link\n  ${value}  ,https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L1\n`;
+      fs.writeFileSync(csvPath, content);
+
+      const result = await readFindingsCsv(csvPath);
+      expect(result.findings[0]!.checkId).toBe(value);
+    }
+  });
+
+  it("sets checkId to undefined when Check ID column is missing or empty", async () => {
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+
+    const csvPath1 = path.join(tmpDir, "no_check_id.csv");
+    fs.writeFileSync(csvPath1, `SCM Link\nhttps://github.com/my-org/my-repo/blob/${sha}/src/index.js#L1\n`);
+    const result1 = await readFindingsCsv(csvPath1);
+    expect(result1.findings[0]!.checkId).toBeUndefined();
+
+    const csvPath2 = path.join(tmpDir, "empty_check_id.csv");
+    fs.writeFileSync(csvPath2, `Check ID,SCM Link\n"   ",https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L1\n`);
+    const result2 = await readFindingsCsv(csvPath2);
+    expect(result2.findings[0]!.checkId).toBeUndefined();
+  });
 });

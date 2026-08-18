@@ -19,7 +19,15 @@ program
   .option("-o, --output <path>", "Path to write the output CSV")
   .option("--retry-failed", "Re-process rows previously marked as failed", false)
   .option("--keep-files", "Do not delete fetched source files after processing")
-  .action(async (csvPaths: string[], options: { output?: string; retryFailed: boolean; keepFiles?: boolean }) => {
+  .option("--check-ids <ids...>", "Filter findings by one or more Check IDs")
+  .option("-n, --limit <count>", "Limit reconciliation to the first N pending findings")
+  .action(async (csvPaths: string[], options: {
+    output?: string;
+    retryFailed: boolean;
+    keepFiles?: boolean;
+    checkIds?: string[];
+    limit?: string;
+  }) => {
     // ── 1. Load and validate config — fail fast ─────────────────────────────
     let config;
     try {
@@ -32,14 +40,47 @@ program
       throw err;
     }
 
-    // ── 2. Banner ────────────────────────────────────────────────────────────
+    // ── 2. Evaluate CLI overrides with precedence ────────────────────────────
+    let cliCheckIds: string[] | undefined;
+    if (options.checkIds && options.checkIds.length > 0) {
+      const tokens = options.checkIds
+        .flatMap((s) => s.split(","))
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (tokens.length > 0) {
+        cliCheckIds = tokens;
+      }
+    }
+
+    let cliLimit: number | undefined;
+    if (options.limit !== undefined) {
+      const n = Number(options.limit);
+      if (!Number.isInteger(n) || n < 1) {
+        process.stderr.write(`\nInvalid --limit value "${options.limit}". Expected a positive integer (>= 1).\n\n`);
+        process.exit(1);
+      }
+      cliLimit = n;
+    }
+
+    const effectiveCheckIds = cliCheckIds !== undefined ? cliCheckIds : config.checkIds;
+    const effectiveLimit = cliLimit !== undefined ? cliLimit : config.limit;
+
+    const effectiveConfig = {
+      ...config,
+      checkIds: effectiveCheckIds,
+      limit: effectiveLimit,
+    };
+
+    // ── 3. Banner ────────────────────────────────────────────────────────────
     console.log("✓ Configuration loaded successfully.");
-    console.log(`  Flow:        ${config.flow}`);
-    console.log(`  Concurrency: ${config.concurrency}`);
-    console.log(`  Model:       ${config.anthropicModel}`);
+    console.log(`  Flow:        ${effectiveConfig.flow}`);
+    console.log(`  Concurrency: ${effectiveConfig.concurrency}`);
+    console.log(`  Model:       ${effectiveConfig.anthropicModel}`);
+    console.log(`  Check IDs:   ${effectiveConfig.checkIds && effectiveConfig.checkIds.length > 0 ? effectiveConfig.checkIds.join(", ") : "(all)"}`);
+    console.log(`  Limit:       ${effectiveConfig.limit !== undefined ? effectiveConfig.limit : "(unlimited)"}`);
     console.log();
 
-    // ── 3. Signal Handling (SIGINT/SIGTERM) ──────────────────────────────────
+    // ── 4. Signal Handling (SIGINT/SIGTERM) ──────────────────────────────────
     const abortController = new AbortController();
     let sigintCount = 0;
 
@@ -57,7 +98,7 @@ program
     process.on("SIGINT", () => handleSignal("SIGINT"));
     process.on("SIGTERM", () => handleSignal("SIGTERM"));
 
-    // ── 4. Progress Reporting ────────────────────────────────────────────────
+    // ── 5. Progress Reporting ────────────────────────────────────────────────
     let lastProgressLen = 0;
     const isInteractive = Boolean(process.stdout.isTTY);
 
@@ -80,19 +121,25 @@ program
 
     const printSummaryMetrics = (pipelineSummary: PipelineSummary) => {
       console.log(`  Total:      ${pipelineSummary.totalFindings}`);
+      if (effectiveConfig.checkIds && effectiveConfig.checkIds.length > 0) {
+        console.log(`  Matched:    ${pipelineSummary.matchedCheckIds}`);
+      }
+      if (effectiveConfig.limit !== undefined || (effectiveConfig.checkIds && effectiveConfig.checkIds.length > 0)) {
+        console.log(`  Selected:   ${pipelineSummary.selectedFindings}`);
+      }
       console.log(`  Completed:  ${pipelineSummary.completed}`);
       if (pipelineSummary.pending > 0 || pipelineSummary.interrupted) {
         console.log(`  Pending:    ${pipelineSummary.pending}`);
       }
       if (!pipelineSummary.interrupted) {
-        if (config.flow === "trufflehog-only") {
+        if (effectiveConfig.flow === "trufflehog-only") {
           console.log(`  TruffleHog: Completed: ${pipelineSummary.completed} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
-        } else if (config.flow === "hybrid") {
+        } else if (effectiveConfig.flow === "hybrid") {
           const thScanned = pipelineSummary.verified + pipelineSummary.unverified + pipelineSummary.notFound;
           console.log(`  TruffleHog: Scanned: ${thScanned} (Verified: ${pipelineSummary.verified}, Unverified: ${pipelineSummary.unverified}, Not Found: ${pipelineSummary.notFound})`);
         }
 
-        if (config.flow === "hybrid" || config.flow === "llm-only") {
+        if (effectiveConfig.flow === "hybrid" || effectiveConfig.flow === "llm-only") {
           console.log(`  LLM Classifications: False Positives: ${pipelineSummary.falsePositive}, Likely Secrets: ${pipelineSummary.likelySecret}, Uncertain: ${pipelineSummary.uncertain}, Invalid Output: ${pipelineSummary.llmInvalidOutput}`);
           if (pipelineSummary.tokenUsage) {
             console.log(`  Token Usage: Input: ${pipelineSummary.tokenUsage.inputTokens}, Output: ${pipelineSummary.tokenUsage.outputTokens}, Estimated Cost: $${pipelineSummary.tokenUsage.estimatedCostUsd.toFixed(6)}`);
@@ -106,10 +153,10 @@ program
       }
     };
 
-    // ── 5. Run Pipeline ──────────────────────────────────────────────────────
+    // ── 6. Run Pipeline ──────────────────────────────────────────────────────
     try {
       const summary = await runPipeline(csvPaths, {
-        config,
+        config: effectiveConfig,
         output: options.output,
         retryFailed: options.retryFailed,
         keepFiles: options.keepFiles,

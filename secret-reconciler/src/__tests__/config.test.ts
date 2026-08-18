@@ -33,6 +33,8 @@ beforeEach(() => {
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
   delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
+  delete process.env["CHECK_IDS"];
+  delete process.env["LIMIT"];
 });
 
 afterEach(() => {
@@ -44,6 +46,8 @@ afterEach(() => {
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
   delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
+  delete process.env["CHECK_IDS"];
+  delete process.env["LIMIT"];
   for (const [k, v] of Object.entries(originalEnv)) {
     if (v !== undefined) process.env[k] = v;
     else delete process.env[k];
@@ -188,6 +192,53 @@ describe("loadConfig — valid configuration", () => {
     withEnv({ GITHUB_RATE_LIMIT_MAX_RETRIES: "5" });
     expect(loadConfig().githubRateLimitMaxRetries).toBe(5);
   });
+
+  it("CHECK_IDS defaults to undefined when absent", () => {
+    withEnv({});
+    expect(loadConfig().checkIds).toBeUndefined();
+  });
+
+  it("parses comma-separated CHECK_IDS into an array of trimmed strings", () => {
+    withEnv({ CHECK_IDS: "CKV_SECRET_6, CKV_AWS_1 , CKV_GCP_2" });
+    expect(loadConfig().checkIds).toEqual(["CKV_SECRET_6", "CKV_AWS_1", "CKV_GCP_2"]);
+  });
+
+  it("parses single CHECK_IDS into a one-element array", () => {
+    withEnv({ CHECK_IDS: "CKV_SECRET_1" });
+    expect(loadConfig().checkIds).toEqual(["CKV_SECRET_1"]);
+  });
+
+  it("normalizes empty or whitespace CHECK_IDS to undefined", () => {
+    withEnv({ CHECK_IDS: "" });
+    expect(loadConfig().checkIds).toBeUndefined();
+
+    withEnv({ CHECK_IDS: "   " });
+    expect(loadConfig().checkIds).toBeUndefined();
+
+    withEnv({ CHECK_IDS: "  ,  ,  " });
+    expect(loadConfig().checkIds).toBeUndefined();
+  });
+
+  it("LIMIT defaults to undefined when absent", () => {
+    withEnv({});
+    expect(loadConfig().limit).toBeUndefined();
+  });
+
+  it("parses valid positive LIMIT integer", () => {
+    withEnv({ LIMIT: "100" });
+    expect(loadConfig().limit).toBe(100);
+
+    withEnv({ LIMIT: "1" });
+    expect(loadConfig().limit).toBe(1);
+  });
+
+  it("normalizes empty or whitespace LIMIT to undefined", () => {
+    withEnv({ LIMIT: "" });
+    expect(loadConfig().limit).toBeUndefined();
+
+    withEnv({ LIMIT: "   " });
+    expect(loadConfig().limit).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -291,6 +342,24 @@ describe("loadConfig — invalid configuration", () => {
 
     withEnv({ GITHUB_PAT: "  ,   ,  " });
     expect(() => loadConfig()).toThrow(/GITHUB_PAT/);
+  });
+
+  it("throws when LIMIT is zero", () => {
+    withEnv({ LIMIT: "0" });
+    expect(() => loadConfig()).toThrow(/LIMIT/);
+  });
+
+  it("throws when LIMIT is negative", () => {
+    withEnv({ LIMIT: "-10" });
+    expect(() => loadConfig()).toThrow(/LIMIT/);
+  });
+
+  it("throws when LIMIT is not an integer", () => {
+    withEnv({ LIMIT: "abc" });
+    expect(() => loadConfig()).toThrow(/LIMIT/);
+
+    withEnv({ LIMIT: "12.34" });
+    expect(() => loadConfig()).toThrow(/LIMIT/);
   });
 
   it("error message names ALL invalid fields, not just the first", () => {
