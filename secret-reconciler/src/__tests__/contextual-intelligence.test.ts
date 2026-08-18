@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import { ContextualSecretAnalyzer } from "../llm/analyzer.js";
+import { searchCurrentFile } from "../llm/context-assembler.js";
 import { redactSensitiveContent } from "../llm/redactor.js";
 import { executeHybridFlow } from "../hybrid/state-machine.js";
 import type { AiGatewayClientLike, AiGatewayRequest } from "../ai-gateway/types.js";
@@ -124,6 +125,91 @@ line five`;
     expect(redacted.split("\n")).toHaveLength(source.split("\n").length);
     expect(redacted).not.toContain("private-key-material");
     expect(redacted.split("\n")[4]).toBe("line five");
+  });
+
+  it("searches only redacted current-file content with bounded literal results", () => {
+    const source = `environment: production
+password: secret-value-that-must-not-leave
+service: payments`;
+    const result = searchCurrentFile(source, {
+      pattern: "production",
+      mode: "literal",
+      caseSensitive: false,
+    });
+
+    expect(result.matchingLines).toEqual([1]);
+    expect(result.totalMatches).toBe(1);
+    expect(result.redactedContext).not.toContain("secret-value-that-must-not-leave");
+    expect(result.redactedContext).toContain("<REDACTED_SECRET>");
+  });
+
+  it("rejects unsafe model-generated search regexes", () => {
+    const result = searchCurrentFile("aaaaaaaaaaaaaaaa!", {
+      pattern: "(a+)+$",
+      mode: "regex",
+      caseSensitive: true,
+    });
+
+    expect(result.error).toMatch(/not supported/);
+    expect(result.matchingLines).toEqual([]);
+  });
+
+  it("exposes only application tools and returns bounded search evidence", async () => {
+    let firstRequest: AiGatewayRequest | undefined;
+    let secondRequest: AiGatewayRequest | undefined;
+    const complete = vi
+      .fn()
+      .mockImplementationOnce(async (request: AiGatewayRequest) => {
+        firstRequest = request;
+        return {
+          toolCalls: [{
+            id: "file-search",
+            name: "search_current_file",
+            arguments: {
+              findingIndex: 0,
+              pattern: "prod|production",
+              mode: "regex",
+              caseSensitive: false,
+              reason: "find environment evidence",
+            },
+          }],
+        };
+      })
+      .mockImplementationOnce(async (request: AiGatewayRequest) => {
+        secondRequest = request;
+        return {
+          toolCalls: [{
+            id: "context-final",
+            name: "submit_context_assessments",
+            arguments: { assessments: [contextualAssessment()] },
+          }],
+        };
+      });
+    const analyzer = new ContextualSecretAnalyzer({
+      config: config({
+        llmDetectorAdvisorEnabled: false,
+        llmPromptProfile: "context-classifier-v2",
+        aiGatewayPromptCacheKey: "secret-reconciler-test",
+        aiGatewayPromptCacheRetention: "in_memory",
+      }),
+      aiGatewayClient: { complete },
+    });
+
+    const results = await analyzer.analyzeWorkItem(workItem(finding()), filePath);
+
+    expect(firstRequest?.tools.map((tool) => tool.function.name)).toEqual([
+      "search_current_file",
+      "get_additional_file_context",
+      "submit_context_assessments",
+    ]);
+    expect(secondRequest?.messages.at(-1)).toMatchObject({ role: "tool" });
+    expect(secondRequest?.messages.at(-1)?.content).not.toContain(
+      "prod-secret-value-that-must-never-leave"
+    );
+    expect(firstRequest?.promptCacheKey).toBe("secret-reconciler-test:context-classifier-v2");
+    expect(secondRequest?.promptCacheKey).toBe(firstRequest?.promptCacheKey);
+    expect(firstRequest?.promptCacheRetention).toBe("in_memory");
+    expect(results[0]?.llmPromptVersion).toBe("context-classifier-v2");
   });
 
   it("classifies not-detected secret-like context and produces a review-only detector proposal", async () => {

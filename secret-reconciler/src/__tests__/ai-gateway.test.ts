@@ -41,6 +41,8 @@ describe("OpenAiCompatibleGatewayClient", () => {
       }],
       toolChoice: "required",
       maxTokens: 1000,
+      promptCacheKey: "secret-reconciler:context-v2",
+      promptCacheRetention: "in_memory",
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -49,6 +51,8 @@ describe("OpenAiCompatibleGatewayClient", () => {
     expect(init.headers.authorization).toBe("Bearer secret-auth-token");
     const requestBody = JSON.parse(init.body);
     expect(requestBody.tool_choice).toBe("required");
+    expect(requestBody.prompt_cache_key).toBe("secret-reconciler:context-v2");
+    expect(requestBody.prompt_cache_retention).toBe("in_memory");
     expect(result).toMatchObject({
       requestId: "gateway-request-1",
       model: "security-model-v1",
@@ -103,5 +107,31 @@ describe("OpenAiCompatibleGatewayClient", () => {
     });
 
     expect(result.usage).toBeUndefined();
+  });
+
+  it("rejects tool calls that were not explicitly declared by the application", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: "unexpected",
+            function: { name: "web_search", arguments: "{}" },
+          }],
+        },
+      }],
+    }), { status: 200 }));
+    const client = new OpenAiCompatibleGatewayClient({
+      baseUrl: "https://gateway.internal",
+      timeoutMs: 1000,
+      fetchFn,
+    });
+
+    await expect(client.complete({
+      model: "model",
+      messages: [],
+      tools: [],
+      toolChoice: "required",
+      maxTokens: 100,
+    })).rejects.toThrow(/undeclared tool web_search/);
   });
 });

@@ -20,6 +20,7 @@ import { CostTracker } from "./cost-tracker.js";
 import {
   assembleContextEnvelope,
   buildAdditionalContext,
+  searchCurrentFile,
   type ContextEnvelope,
 } from "./context-assembler.js";
 import { enforceEvidencePolicy, validateDetectorRegexProposal } from "./evidence-policy.js";
@@ -27,16 +28,22 @@ import {
   additionalContextRequestSchema,
   contextAssessmentSchema,
   detectorGapAssessmentSchema,
+  fileSearchRequestSchema,
   GET_ADDITIONAL_FILE_CONTEXT_TOOL,
+  SEARCH_CURRENT_FILE_TOOL,
   SUBMIT_CONTEXT_ASSESSMENTS_TOOL,
   SUBMIT_DETECTOR_GAP_ASSESSMENTS_TOOL,
   submitContextAssessmentsSchema,
   submitDetectorGapAssessmentsSchema,
 } from "./tools.js";
 import {
-  CONTEXT_CLASSIFIER_PROMPT_VERSION,
-  CONTEXT_CLASSIFIER_SYSTEM_PROMPT,
+  CONTEXT_CLASSIFIER_PROMPT_VERSION as CONTEXT_CLASSIFIER_PROMPT_VERSION_V1,
+  CONTEXT_CLASSIFIER_SYSTEM_PROMPT as CONTEXT_CLASSIFIER_SYSTEM_PROMPT_V1,
 } from "./prompts/context-classifier-v1.js";
+import {
+  CONTEXT_CLASSIFIER_PROMPT_VERSION as CONTEXT_CLASSIFIER_PROMPT_VERSION_V2,
+  CONTEXT_CLASSIFIER_SYSTEM_PROMPT as CONTEXT_CLASSIFIER_SYSTEM_PROMPT_V2,
+} from "./prompts/context-classifier-v2.js";
 import {
   DETECTOR_ADVISOR_PROMPT_VERSION,
   DETECTOR_ADVISOR_SYSTEM_PROMPT,
@@ -159,6 +166,9 @@ interface AnalyzerConfig {
   maxContextExpansions: number;
   maxContextLines: number;
   detectorAdvisorEnabled: boolean;
+  promptProfile: "context-classifier-v1" | "context-classifier-v2";
+  promptCacheKey?: string;
+  promptCacheRetention?: "in_memory" | "24h";
 }
 
 export interface AnalyzeWorkItemOptions {
@@ -188,6 +198,9 @@ export class ContextualSecretAnalyzer {
       maxContextExpansions: options.config.llmMaxContextExpansions ?? 2,
       maxContextLines: options.config.llmMaxContextLines ?? 150,
       detectorAdvisorEnabled: options.config.llmDetectorAdvisorEnabled ?? false,
+      promptProfile: options.config.llmPromptProfile ?? "context-classifier-v2",
+      promptCacheKey: options.config.aiGatewayPromptCacheKey,
+      promptCacheRetention: options.config.aiGatewayPromptCacheRetention,
     };
     this.costTracker = options.costTracker ?? new CostTracker();
     this.legacyMode = Boolean(options.anthropicClient && !options.aiGatewayClient);
@@ -206,6 +219,24 @@ export class ContextualSecretAnalyzer {
         timeoutMs: (options.config.aiGatewayTimeoutSeconds ?? 30) * 1000,
       });
     }
+  }
+
+  private get classifierPromptVersion(): string {
+    return this.config.promptProfile === "context-classifier-v1"
+      ? CONTEXT_CLASSIFIER_PROMPT_VERSION_V1
+      : CONTEXT_CLASSIFIER_PROMPT_VERSION_V2;
+  }
+
+  private get classifierSystemPrompt(): string {
+    return this.config.promptProfile === "context-classifier-v1"
+      ? CONTEXT_CLASSIFIER_SYSTEM_PROMPT_V1
+      : CONTEXT_CLASSIFIER_SYSTEM_PROMPT_V2;
+  }
+
+  private promptCacheKey(scope: string): string | undefined {
+    return this.config.promptCacheKey
+      ? `${this.config.promptCacheKey}:${scope}`
+      : undefined;
   }
 
   async analyzeWorkItem(
@@ -281,7 +312,7 @@ export class ContextualSecretAnalyzer {
       llmReason: reason,
       llmConfidence: 0,
       llmModel: this.config.model,
-      llmPromptVersion: CONTEXT_CLASSIFIER_PROMPT_VERSION,
+      llmPromptVersion: this.classifierPromptVersion,
       error,
     }));
   }
@@ -320,8 +351,17 @@ export class ContextualSecretAnalyzer {
       .join("\n\n")}\n\nAnnotated Code Context:\n${envelopes
       .map((item) => item.redactedContext)
       .join("\n--- (next finding) ---\n")}`;
+    const classifierTools = this.config.promptProfile === "context-classifier-v2"
+      ? [
+          SEARCH_CURRENT_FILE_TOOL,
+          GET_ADDITIONAL_FILE_CONTEXT_TOOL,
+          SUBMIT_CONTEXT_ASSESSMENTS_TOOL,
+        ]
+      : this.config.maxContextExpansions > 0
+        ? [GET_ADDITIONAL_FILE_CONTEXT_TOOL, SUBMIT_CONTEXT_ASSESSMENTS_TOOL]
+        : [SUBMIT_CONTEXT_ASSESSMENTS_TOOL];
     const messages: AiGatewayMessage[] = [
-      { role: "system", content: CONTEXT_CLASSIFIER_SYSTEM_PROMPT },
+      { role: "system", content: this.classifierSystemPrompt },
       {
         role: "user",
         content: this.legacyMode
@@ -345,11 +385,11 @@ export class ContextualSecretAnalyzer {
       const response = await this.client.complete({
         model: this.config.model,
         messages,
-        tools: this.config.maxContextExpansions > 0
-          ? [GET_ADDITIONAL_FILE_CONTEXT_TOOL, SUBMIT_CONTEXT_ASSESSMENTS_TOOL]
-          : [SUBMIT_CONTEXT_ASSESSMENTS_TOOL],
+        tools: classifierTools,
         toolChoice: "required",
         maxTokens: this.config.maxTokensPerRequest,
+        promptCacheKey: this.promptCacheKey(this.classifierPromptVersion),
+        promptCacheRetention: this.config.promptCacheRetention,
       });
       callsUsed++;
       this.recordUsage(response);
@@ -361,39 +401,50 @@ export class ContextualSecretAnalyzer {
         break;
       }
 
-      const contextCall = response.toolCalls.find((call) => call.name === "get_additional_file_context");
-      const parsedRequest = additionalContextRequestSchema.safeParse(contextCall?.arguments);
-      if (
-        !contextCall ||
-        !parsedRequest.success ||
-        expansions >= this.config.maxContextExpansions
-      ) {
-        break;
-      }
-      const envelope = envelopes[parsedRequest.data.findingIndex];
-      if (!envelope) break;
+      if (expansions >= this.config.maxContextExpansions) break;
 
-      const maxEnd = parsedRequest.data.startLine + this.config.maxContextLines - 1;
-      const safeEnd = Math.min(parsedRequest.data.endLine, maxEnd);
-      const additional = buildAdditionalContext(
-        fileContent,
-        parsedRequest.data.startLine,
-        safeEnd,
-        this.config.maxContextLines
-      );
+      const searchCall = response.toolCalls.find((call) => call.name === "search_current_file");
+      const contextCall = response.toolCalls.find((call) => call.name === "get_additional_file_context");
+      const retrievalCall = searchCall ?? contextCall;
+      if (!retrievalCall) break;
+
+      let toolResult: Record<string, unknown>;
+      if (searchCall) {
+        const parsedSearch = fileSearchRequestSchema.safeParse(searchCall.arguments);
+        if (!parsedSearch.success || !envelopes[parsedSearch.data.findingIndex]) break;
+        toolResult = {
+          findingIndex: parsedSearch.data.findingIndex,
+          ...searchCurrentFile(fileContent, {
+            pattern: parsedSearch.data.pattern,
+            mode: parsedSearch.data.mode,
+            caseSensitive: parsedSearch.data.caseSensitive,
+          }),
+        };
+      } else {
+        const parsedRequest = additionalContextRequestSchema.safeParse(contextCall?.arguments);
+        if (!parsedRequest.success || !envelopes[parsedRequest.data.findingIndex]) break;
+        const maxEnd = parsedRequest.data.startLine + this.config.maxContextLines - 1;
+        const safeEnd = Math.min(parsedRequest.data.endLine, maxEnd);
+        toolResult = {
+          findingIndex: parsedRequest.data.findingIndex,
+          redactedContext: buildAdditionalContext(
+            fileContent,
+            parsedRequest.data.startLine,
+            safeEnd,
+            this.config.maxContextLines
+          ),
+          truncated: safeEnd < parsedRequest.data.endLine,
+        };
+      }
       messages.push({
         role: "assistant",
         content: response.content ?? "",
-        toolCalls: [contextCall],
+        toolCalls: [retrievalCall],
       });
       messages.push({
         role: "tool",
-        content: JSON.stringify({
-          findingIndex: parsedRequest.data.findingIndex,
-          redactedContext: additional,
-          truncated: safeEnd < parsedRequest.data.endLine,
-        }),
-        toolCallId: contextCall.id,
+        content: JSON.stringify(toolResult),
+        toolCallId: retrievalCall.id,
       });
       expansions++;
     }
@@ -464,8 +515,8 @@ export class ContextualSecretAnalyzer {
         detectorGapAssessment: detectorAssessments.get(index),
         llmModel: this.config.model,
         llmPromptVersion: detectorAssessments.has(index)
-          ? `${CONTEXT_CLASSIFIER_PROMPT_VERSION}+${DETECTOR_ADVISOR_PROMPT_VERSION}`
-          : CONTEXT_CLASSIFIER_PROMPT_VERSION,
+          ? `${this.classifierPromptVersion}+${DETECTOR_ADVISOR_PROMPT_VERSION}`
+          : this.classifierPromptVersion,
         error: "",
       };
     });
@@ -495,6 +546,8 @@ export class ContextualSecretAnalyzer {
       tools: [SUBMIT_DETECTOR_GAP_ASSESSMENTS_TOOL],
       toolChoice: "required",
       maxTokens: this.config.maxTokensPerRequest,
+      promptCacheKey: this.promptCacheKey(DETECTOR_ADVISOR_PROMPT_VERSION),
+      promptCacheRetention: this.config.promptCacheRetention,
     });
     this.recordUsage(response);
     const call = response.toolCalls.find((toolCall) => toolCall.name === "submit_detector_gap_assessments");

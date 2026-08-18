@@ -11,6 +11,8 @@ const VALID_ENV: Record<string, string> = {
   AI_GATEWAY_URL: "https://ai-gateway.internal",
   AI_GATEWAY_MODEL: "security-context-model",
   AI_GATEWAY_AUTH_TOKEN: "gateway-test-token",
+  AI_GATEWAY_PROMPT_CACHE_KEY: "secret-reconciler-test",
+  AI_GATEWAY_PROMPT_CACHE_RETENTION: "in_memory",
   AI_GATEWAY_INPUT_COST_PER_MILLION_USD: "1.25",
   AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD: "10",
   AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD: "0.125",
@@ -18,6 +20,7 @@ const VALID_ENV: Record<string, string> = {
   LLM_DETECTOR_ADVISOR_ENABLED: "false",
   LLM_MAX_CONTEXT_EXPANSIONS: "2",
   LLM_MAX_CONTEXT_LINES: "150",
+  LLM_PROMPT_PROFILE: "context-classifier-v2",
   MAX_TOKENS_PER_REQUEST: "4096",
   MAX_LLM_CALLS_PER_FILE: "3",
   GITHUB_PAT: "ghp_test_pat",
@@ -87,6 +90,8 @@ describe("loadConfig — valid configuration", () => {
     expect(config.aiGatewayUrl).toBe("https://ai-gateway.internal");
     expect(config.aiGatewayModel).toBe("security-context-model");
     expect(config.aiGatewayAuthToken).toBe("gateway-test-token");
+    expect(config.aiGatewayPromptCacheKey).toBe("secret-reconciler-test");
+    expect(config.aiGatewayPromptCacheRetention).toBe("in_memory");
     expect(config.aiGatewayInputCostPerMillionUsd).toBe(1.25);
     expect(config.aiGatewayOutputCostPerMillionUsd).toBe(10);
     expect(config.aiGatewayCachedInputCostPerMillionUsd).toBe(0.125);
@@ -96,6 +101,7 @@ describe("loadConfig — valid configuration", () => {
     expect(config.concurrency).toBe(5);
     expect(config.maxFileSizeKb).toBe(500);
     expect(config.surroundingLines).toBe(10);
+    expect(config.llmPromptProfile).toBe("context-classifier-v2");
     expect(config.cleanupTempFiles).toBe(true);
     expect(config.githubRateLimitMaxRetries).toBe(2); // default
   });
@@ -104,6 +110,16 @@ describe("loadConfig — valid configuration", () => {
     withEnv({ CLEANUP_TEMP_FILES: "false" });
     const config = loadConfig();
     expect(config.cleanupTempFiles).toBe(false);
+  });
+
+  it("defaults the initial context window to ten surrounding lines", () => {
+    withEnv({ SURROUNDING_LINES: undefined });
+    expect(loadConfig().surroundingLines).toBe(10);
+  });
+
+  it("accepts the v1 classifier prompt for backwards compatibility", () => {
+    withEnv({ LLM_PROMPT_PROFILE: "context-classifier-v1" });
+    expect(loadConfig().llmPromptProfile).toBe("context-classifier-v1");
   });
 
   it("rejects negative gateway token prices", () => {

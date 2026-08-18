@@ -61,6 +61,14 @@ export const additionalContextRequestSchema = z.object({
   reason: z.string().min(1).max(300),
 });
 
+export const fileSearchRequestSchema = z.object({
+  findingIndex: z.number().int().nonnegative(),
+  pattern: z.string().min(1).max(120),
+  mode: z.enum(["literal", "regex"]),
+  caseSensitive: z.boolean(),
+  reason: z.string().min(1).max(300),
+});
+
 export const detectorGapAssessmentSchema = z.object({
   findingIndex: z.number().int().nonnegative(),
   status: z.enum([
@@ -97,6 +105,26 @@ export const GET_ADDITIONAL_FILE_CONTEXT_TOOL: AiGatewayToolDefinition = {
         findingIndex: { type: "integer", minimum: 0 },
         startLine: { type: "integer", minimum: 1 },
         endLine: { type: "integer", minimum: 1 },
+        reason: { type: "string", minLength: 1, maxLength: 300 },
+      },
+    },
+  },
+};
+
+export const SEARCH_CURRENT_FILE_TOOL: AiGatewayToolDefinition = {
+  type: "function",
+  function: {
+    name: "search_current_file",
+    description: "Search the already-fetched current file using a literal or restricted line-safe regex and return bounded, redacted matching context.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["findingIndex", "pattern", "mode", "caseSensitive", "reason"],
+      properties: {
+        findingIndex: { type: "integer", minimum: 0 },
+        pattern: { type: "string", minLength: 1, maxLength: 120 },
+        mode: { enum: ["literal", "regex"] },
+        caseSensitive: { type: "boolean" },
         reason: { type: "string", minLength: 1, maxLength: 300 },
       },
     },

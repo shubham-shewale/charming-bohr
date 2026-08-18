@@ -153,6 +153,8 @@ const configSchema = z.object({
   AI_GATEWAY_MODEL: optionalTrimmedString,
   AI_GATEWAY_AUTH_TOKEN: optionalTrimmedString,
   AI_GATEWAY_TIMEOUT_SECONDS: optionalRangedIntString(1, 30),
+  AI_GATEWAY_PROMPT_CACHE_KEY: optionalTrimmedString,
+  AI_GATEWAY_PROMPT_CACHE_RETENTION: z.enum(["in_memory", "24h"] as const).optional(),
   AI_GATEWAY_INPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
   AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
   AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD: optionalNonNegativeNumber,
@@ -160,7 +162,10 @@ const configSchema = z.object({
   LLM_DETECTOR_ADVISOR_ENABLED: optionalBooleanString(false),
   LLM_MAX_CONTEXT_EXPANSIONS: optionalRangedIntString(0, 2),
   LLM_MAX_CONTEXT_LINES: optionalRangedIntString(1, 150),
-  LLM_PROMPT_PROFILE: z.literal("context-classifier-v1").optional().default("context-classifier-v1"),
+  LLM_PROMPT_PROFILE: z
+    .enum(["context-classifier-v1", "context-classifier-v2"] as const)
+    .optional()
+    .default("context-classifier-v2"),
   LLM_DETECTOR_PROMPT_PROFILE: z.literal("detector-advisor-v1").optional().default("detector-advisor-v1"),
   MAX_TOKENS_PER_REQUEST: optionalPositiveInt,
   MAX_LLM_CALLS_PER_FILE: optionalPositiveInt,
@@ -185,7 +190,7 @@ const configSchema = z.object({
   AZURE_DEVOPS_PAT: optionalTrimmedString,
   CONCURRENCY: rangedIntString(1),
   MAX_FILE_SIZE_KB: rangedIntString(1),
-  SURROUNDING_LINES: rangedIntString(0),
+  SURROUNDING_LINES: optionalRangedIntString(0, 10),
   CLEANUP_TEMP_FILES: booleanString,
   TRUFFLEHOG_VERIFICATION_MODE: z
     .enum(["all", "no-verification"] as const, {
@@ -267,6 +272,8 @@ export interface AppConfig {
   aiGatewayModel?: string;
   aiGatewayAuthToken?: string;
   aiGatewayTimeoutSeconds?: number;
+  aiGatewayPromptCacheKey?: string;
+  aiGatewayPromptCacheRetention?: "in_memory" | "24h";
   aiGatewayInputCostPerMillionUsd?: number;
   aiGatewayOutputCostPerMillionUsd?: number;
   aiGatewayCachedInputCostPerMillionUsd?: number;
@@ -274,7 +281,7 @@ export interface AppConfig {
   llmDetectorAdvisorEnabled?: boolean;
   llmMaxContextExpansions?: number;
   llmMaxContextLines?: number;
-  llmPromptProfile?: "context-classifier-v1";
+  llmPromptProfile?: "context-classifier-v1" | "context-classifier-v2";
   llmDetectorPromptProfile?: "detector-advisor-v1";
   /** @deprecated Test-only compatibility field; production uses aiGatewayAuthToken. */
   anthropicApiKey?: string;
@@ -338,6 +345,8 @@ export function loadConfig(): AppConfig {
     aiGatewayModel: env.AI_GATEWAY_MODEL,
     aiGatewayAuthToken: env.AI_GATEWAY_AUTH_TOKEN,
     aiGatewayTimeoutSeconds: env.AI_GATEWAY_TIMEOUT_SECONDS,
+    aiGatewayPromptCacheKey: env.AI_GATEWAY_PROMPT_CACHE_KEY,
+    aiGatewayPromptCacheRetention: env.AI_GATEWAY_PROMPT_CACHE_RETENTION,
     aiGatewayInputCostPerMillionUsd: env.AI_GATEWAY_INPUT_COST_PER_MILLION_USD,
     aiGatewayOutputCostPerMillionUsd: env.AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD,
     aiGatewayCachedInputCostPerMillionUsd: env.AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD,

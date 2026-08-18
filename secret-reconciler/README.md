@@ -160,6 +160,8 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `AI_GATEWAY_MODEL` | String | `security-context-model` | Conditional | Gateway model identifier. |
 | `AI_GATEWAY_AUTH_TOKEN` | String | `...` | *Optional* | Bearer token; omit for other gateway authentication mechanisms. |
 | `AI_GATEWAY_TIMEOUT_SECONDS` | Integer | `30` | *Optional* | Per-request timeout. |
+| `AI_GATEWAY_PROMPT_CACHE_KEY` | String | `secret-reconciler` | *Optional* | Forwarded as `prompt_cache_key` when the gateway/model supports OpenAI-compatible prompt caching. |
+| `AI_GATEWAY_PROMPT_CACHE_RETENTION` | Enum | `in_memory`, `24h` | *Optional* | Forwarded retention request. Support depends on the selected gateway/model. |
 | `AI_GATEWAY_INPUT_COST_PER_MILLION_USD` | Number | `1.25` | *Optional* | Input-token price for the configured model. Cost is `n/a` unless both input and output prices are set. |
 | `AI_GATEWAY_OUTPUT_COST_PER_MILLION_USD` | Number | `10.00` | *Optional* | Output-token price for the configured model. |
 | `AI_GATEWAY_CACHED_INPUT_COST_PER_MILLION_USD` | Number | `0.125` | *Optional* | Cached-input price. Defaults to the normal input price when omitted. |
@@ -167,6 +169,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `LLM_DETECTOR_ADVISOR_ENABLED` | Boolean | `false` | *Optional* | Enables review-only detector advice for `not_detected + probable_secret`. |
 | `LLM_MAX_CONTEXT_EXPANSIONS` | Integer | `2` | *Optional* | Maximum bounded context tool calls per batch. |
 | `LLM_MAX_CONTEXT_LINES` | Integer | `150` | *Optional* | Maximum lines returned by each context tool call. |
+| `LLM_PROMPT_PROFILE` | Enum | `context-classifier-v2` | *Optional* | Versioned classifier prompt. V2 adds bounded current-file search; V1 remains accepted for compatibility. |
 | `MAX_TOKENS_PER_REQUEST` | Integer | `4096` | Conditional | Maximum completion tokens per gateway request (>= 1). |
 | `MAX_LLM_CALLS_PER_FILE` | Integer | `3` | **Yes** (LLM/Hybrid) | Maximum LLM batch calls per file work item (>= 1). |
 | `GITHUB_PAT` | String | `ghp_...` | **Yes** | GitHub Personal Access Token. |
@@ -179,12 +182,26 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `LIMIT` | Integer | `100` | *Optional* | Maximum number of pending findings to process in this run (>= 1, default: unlimited). |
 | `CONCURRENCY` | Integer | `5` | **Yes** | Number of file work items processed concurrently (>= 1). |
 | `MAX_FILE_SIZE_KB` | Integer | `500` | **Yes** | Maximum file size in KB to download and analyze (>= 1). |
-| `SURROUNDING_LINES` | Integer | `10` | **Yes** | Lines of code context included above and below each finding (>= 0). |
+| `SURROUNDING_LINES` | Integer | `10` | *Optional* | Initial lines of redacted context included above and below each finding. |
 | `CLEANUP_TEMP_FILES` | Boolean | `true` | **Yes** | Coerces `"true"` or `"false"`. Deletes downloaded source files on completion. |
 
 ---
 
 ## Analysis Flows
+
+### LLM Context and Allowed Tools
+
+The initial classifier request contains the repository path and revision, TruffleHog result, file/path signals, finding line range, and a redacted window of 10 lines above and below the finding by default. `LLM_MAX_CONTEXT_LINES` does not control this initial window; it caps a later explicit range read.
+
+The gateway receives only these application-defined tools, in a fixed order:
+
+1. `search_current_file` — literal or restricted line-safe regex search over the already-fetched file; returns at most 20 matches with bounded redacted context.
+2. `get_additional_file_context` — reads one redacted line range from the same file, capped by `LLM_MAX_CONTEXT_LINES`.
+3. `submit_context_assessments` — submits the final schema-validated classification.
+
+The optional detector-advisor request receives only `submit_detector_gap_assessments`. Tool names returned by the gateway are checked against the request's declared tool list; undeclared tools are rejected. Search and range reads share the `LLM_MAX_CONTEXT_EXPANSIONS` budget and never fetch another repository file.
+
+Prompt caching is performed by the gateway/model, not by this CLI. The CLI keeps system instructions and ordered tool schemas stable before dynamic finding content and can forward a configured cache key and retention policy. Actual cache use is reported only from the gateway's `cached_tokens` value.
 
 | Flow | Strengths | Ideal For | LLM Used? | Scanner Used? |
 | :--- | :--- | :--- | :--- | :--- |
@@ -331,7 +348,7 @@ The output CSV preserves **all original input columns** verbatim and appends 20 
 | `detector_gap_reason` | String | `"Scanner did not detect the generalized token shape"` | Detector proposal rationale. |
 | `detector_gap_proposal` | JSON | `{...}` | Generalized proposal; never applied automatically. |
 | `llm_model` | String | `security-context-model` | Audited gateway model. |
-| `llm_prompt_version` | String | `context-classifier-v1` | Versioned prompt/tool contract. |
+| `llm_prompt_version` | String | `context-classifier-v2` | Versioned prompt/tool contract. |
 | `error` | String | `""`, `File size (650 KB) exceeds limit` | Error or skip reason if not completed. |
 
 #### Status & Classification Value Dictionary

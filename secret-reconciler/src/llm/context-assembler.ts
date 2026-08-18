@@ -125,3 +125,130 @@ export function buildAdditionalContext(
     { surroundingLines: 0, maxLines }
   ).formattedContext;
 }
+
+export interface FileSearchOptions {
+  pattern: string;
+  mode: "literal" | "regex";
+  caseSensitive: boolean;
+  maxResults?: number;
+  surroundingLines?: number;
+}
+
+export interface FileSearchResult {
+  matchingLines: number[];
+  totalMatches: number;
+  redactedContext: string;
+  truncated: boolean;
+  error?: string;
+}
+
+/**
+ * Accepts a deliberately small, line-oriented regex subset. Grouping,
+ * lookarounds, counted repetition, and highly repetitive quantifiers are
+ * rejected so a model-generated search cannot monopolize the Node event loop.
+ */
+function validateSearchRegex(pattern: string): string | undefined {
+  if (pattern.length === 0 || pattern.length > 120 || /[\r\n]/.test(pattern)) {
+    return "regex must contain 1-120 characters on one line";
+  }
+  let escaped = false;
+  let quantifierCount = 0;
+  for (const character of pattern) {
+    if (escaped) {
+      if (/[1-9]/.test(character)) {
+        return "regex groups, counted repetition, lookarounds, and backreferences are not supported";
+      }
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if ("(){}".includes(character)) {
+      return "regex groups, counted repetition, lookarounds, and backreferences are not supported";
+    }
+    if ("+*?".includes(character)) quantifierCount++;
+  }
+  if (quantifierCount > 3 || /\.\*.*\.\*/.test(pattern)) {
+    return "regex contains too many unbounded quantifiers";
+  }
+  if (escaped) {
+    return "regex is invalid";
+  }
+  try {
+    new RegExp(pattern, "u");
+  } catch {
+    return "regex is invalid";
+  }
+  return undefined;
+}
+
+/** Searches only the already-fetched file and returns bounded, redacted evidence. */
+export function searchCurrentFile(
+  fileContent: string,
+  options: FileSearchOptions
+): FileSearchResult {
+  const maxResults = Math.min(20, Math.max(1, options.maxResults ?? 20));
+  const surroundingLines = Math.min(3, Math.max(0, options.surroundingLines ?? 2));
+  const redacted = redactSensitiveContent(fileContent);
+  const lines = redacted.split(/\r?\n/);
+
+  let matches: (line: string) => boolean;
+  if (options.mode === "regex") {
+    const error = validateSearchRegex(options.pattern);
+    if (error) {
+      return {
+        matchingLines: [],
+        totalMatches: 0,
+        redactedContext: "",
+        truncated: false,
+        error,
+      };
+    }
+    const regex = new RegExp(options.pattern, options.caseSensitive ? "u" : "iu");
+    matches = (line) => regex.test(line.slice(0, 2_000));
+  } else {
+    if (options.pattern.length === 0 || options.pattern.length > 120) {
+      return {
+        matchingLines: [],
+        totalMatches: 0,
+        redactedContext: "",
+        truncated: false,
+        error: "literal search must contain 1-120 characters",
+      };
+    }
+    const needle = options.caseSensitive ? options.pattern : options.pattern.toLowerCase();
+    matches = (line) => {
+      const searchable = options.caseSensitive ? line : line.toLowerCase();
+      return searchable.slice(0, 2_000).includes(needle);
+    };
+  }
+
+  const allMatchingLines: number[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    if (matches(lines[index]!)) allMatchingLines.push(index + 1);
+  }
+  const matchingLines = allMatchingLines.slice(0, maxResults);
+
+  // Hide the complete scalar on every matched line. The response still proves
+  // that the requested pattern matched that line, while avoiding value leaks.
+  let outputContent = redacted;
+  for (const line of matchingLines) {
+    outputContent = redactFocalValues(outputContent, line, line);
+  }
+  const context = matchingLines.length > 0
+    ? buildCodeContext(
+        outputContent,
+        matchingLines.map((line) => ({ lineStart: line, lineEnd: line })),
+        { surroundingLines, maxLines: 100, maxBytes: 32 * 1024 }
+      )
+    : { formattedContext: "", truncated: false };
+
+  return {
+    matchingLines,
+    totalMatches: allMatchingLines.length,
+    redactedContext: context.formattedContext,
+    truncated: allMatchingLines.length > matchingLines.length || context.truncated,
+  };
+}

@@ -28,6 +28,9 @@ export interface AiGatewayRequest {
   tools: AiGatewayToolDefinition[];
   toolChoice: "auto" | "required";
   maxTokens: number;
+  /** Forwarded only when the configured gateway/model supports prompt caching. */
+  promptCacheKey?: string;
+  promptCacheRetention?: "in_memory" | "24h";
 }
 
 export interface AiGatewayResponse {

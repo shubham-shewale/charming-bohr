@@ -112,6 +112,12 @@ export class OpenAiCompatibleGatewayClient implements AiGatewayClientLike {
           tools: request.tools,
           tool_choice: request.toolChoice,
           max_tokens: request.maxTokens,
+          ...(request.promptCacheKey
+            ? { prompt_cache_key: request.promptCacheKey }
+            : {}),
+          ...(request.promptCacheRetention
+            ? { prompt_cache_retention: request.promptCacheRetention }
+            : {}),
         }),
         signal: controller.signal,
       });
@@ -127,9 +133,15 @@ export class OpenAiCompatibleGatewayClient implements AiGatewayClientLike {
       const hasTokenUsage =
         typeof usage?.prompt_tokens === "number" &&
         typeof usage.completion_tokens === "number";
+      const toolCalls = (message.tool_calls ?? []).map(parseToolCall);
+      const declaredTools = new Set(request.tools.map((tool) => tool.function.name));
+      const undeclaredTool = toolCalls.find((toolCall) => !declaredTools.has(toolCall.name));
+      if (undeclaredTool) {
+        throw new Error(`AI Gateway returned undeclared tool ${undeclaredTool.name}`);
+      }
 
       return {
-        toolCalls: (message.tool_calls ?? []).map(parseToolCall),
+        toolCalls,
         content: message.content ?? undefined,
         model: payload.model,
         requestId: payload.id,
