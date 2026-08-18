@@ -95,9 +95,18 @@ describe("loadConfig — valid configuration", () => {
   });
 
   it("accepts FLOW=trufflehog-only", () => {
-    withEnv({ FLOW: "trufflehog-only" });
+    withEnv({
+      FLOW: "trufflehog-only",
+      ANTHROPIC_API_KEY: undefined,
+      ANTHROPIC_MODEL: undefined,
+      MAX_TOKENS_PER_REQUEST: undefined,
+      MAX_LLM_CALLS_PER_FILE: undefined,
+    });
     expect(() => loadConfig()).not.toThrow();
-    expect(loadConfig().flow).toBe("trufflehog-only");
+    const config = loadConfig();
+    expect(config.flow).toBe("trufflehog-only");
+    expect(config.anthropicApiKey).toBeUndefined();
+    expect(config.anthropicModel).toBeUndefined();
   });
 
   it("accepts FLOW=llm-only", () => {
@@ -267,6 +276,23 @@ describe("loadConfig — invalid configuration", () => {
     withEnv({ ANTHROPIC_API_KEY: undefined });
 
     expect(() => loadConfig()).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  it("requires all LLM settings for hybrid and llm-only flows", () => {
+    for (const flow of ["hybrid", "llm-only"] as const) {
+      withEnv({
+        FLOW: flow,
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_MODEL: undefined,
+        MAX_TOKENS_PER_REQUEST: undefined,
+        MAX_LLM_CALLS_PER_FILE: undefined,
+      });
+
+      expect(() => loadConfig()).toThrow(/ANTHROPIC_API_KEY/);
+      expect(() => loadConfig()).toThrow(/ANTHROPIC_MODEL/);
+      expect(() => loadConfig()).toThrow(/MAX_TOKENS_PER_REQUEST/);
+      expect(() => loadConfig()).toThrow(/MAX_LLM_CALLS_PER_FILE/);
+    }
   });
 
   it("throws when FLOW has an invalid enum value", () => {

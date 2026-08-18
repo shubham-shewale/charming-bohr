@@ -132,7 +132,7 @@ async function runPass(
     tokenPool: TokenPool;
     fetcher: FileFetcher;
     config: AppConfig;
-    claudeAnalyzer: ClaudeAnalyzer;
+    claudeAnalyzer?: ClaudeAnalyzer;
     trufflehogOptions: RunTruffleHogOptions;
     processedResultsMap: Map<FindingRef, FindingResult>;
     onFileDone: (results: FindingResult[]) => void;
@@ -168,6 +168,9 @@ async function runPass(
             error: errMsg,
           }));
         } else if (config.flow === "llm-only") {
+          if (!claudeAnalyzer) {
+            throw new Error("LLM analyzer is not configured for llm-only flow");
+          }
           results = await claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
         } else if (config.flow === "trufflehog-only") {
           results = await scanWithTruffleHog(
@@ -176,6 +179,9 @@ async function runPass(
             trufflehogOptions
           );
         } else if (config.flow === "hybrid") {
+          if (!claudeAnalyzer) {
+            throw new Error("LLM analyzer is not configured for hybrid flow");
+          }
           results = await executeHybridFlow(workItem, localFilePath, {
             claudeAnalyzer,
             trufflehogOptions,
@@ -254,11 +260,13 @@ export async function runPipeline(
   });
 
   const costTracker = new CostTracker();
-  const claudeAnalyzer = new ClaudeAnalyzer({
-    config,
-    anthropicClient: options.anthropicClient,
-    costTracker,
-  });
+  const claudeAnalyzer = config.flow === "trufflehog-only"
+    ? undefined
+    : new ClaudeAnalyzer({
+        config,
+        anthropicClient: options.anthropicClient,
+        costTracker,
+      });
 
   // Sleep function (overridable for testing)
   const sleepFn = options.sleepFn ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));

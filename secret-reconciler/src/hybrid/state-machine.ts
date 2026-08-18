@@ -2,7 +2,6 @@ import {
   type FileWorkItem,
   type FindingRef,
   type FindingResult,
-  type TruffleHogVerificationMode,
 } from "../types.js";
 import { buildNonPendingFindingResult } from "../csv/reader.js";
 import type { ClaudeAnalyzer } from "../llm/analyzer.js";
@@ -10,73 +9,66 @@ import { runTruffleHog, type RunTruffleHogOptions } from "../trufflehog/runner.j
 import { matchDetectionsToFindings } from "../trufflehog/matcher.js";
 
 /**
- * Explicit action returned by the hybrid state machine after evaluating an LLM result.
+ * Explicit action returned after evaluating TruffleHog evidence.
+ *
+ * Credential validity is owned by TruffleHog. The LLM is permitted to add
+ * false-positive context only after the scanner returns `unverified` or
+ * `not_detected`; it can never override verified, unknown, or ambiguous
+ * verification evidence.
  */
-export type HybridTransitionAction =
-  | { type: "COMPLETE_NO_TRUFFLEHOG"; result: FindingResult }
-  | { type: "FAIL_NO_TRUFFLEHOG"; result: FindingResult }
-  | { type: "SKIP_NO_TRUFFLEHOG"; result: FindingResult }
-  | { type: "INVOKE_TRUFFLEHOG"; finding: FindingRef; llmResult: FindingResult };
+export type VerificationFirstTransition =
+  | { type: "COMPLETE_VERIFIED"; result: FindingResult }
+  | { type: "COMPLETE_UNKNOWN"; result: FindingResult }
+  | { type: "COMPLETE_AMBIGUOUS"; result: FindingResult }
+  | { type: "INVOKE_LLM"; finding: FindingRef; verificationResult: FindingResult }
+  | { type: "FAIL_VERIFICATION"; result: FindingResult }
+  | { type: "SKIP_VERIFICATION"; result: FindingResult };
 
 /**
- * Pure transition function for the Hybrid flow state machine.
+ * Pure transition function for the verification-first Hybrid flow.
  *
- * State transitions:
- * - LLM returns `false_positive` (completed) -> COMPLETE_NO_TRUFFLEHOG (status=completed, no TruffleHog)
- * - LLM returns `likely_secret` (completed) -> INVOKE_TRUFFLEHOG
- * - LLM returns `uncertain` (completed)     -> INVOKE_TRUFFLEHOG
- * - LLM returns failure (status=failed)     -> FAIL_NO_TRUFFLEHOG (status=failed, no TruffleHog)
- * - Finding skipped (status=skipped)        -> SKIP_NO_TRUFFLEHOG (status=skipped, no TruffleHog)
+ * - verified  -> terminal; never sent to the LLM
+ * - unknown   -> terminal operational uncertainty; never treated as an FP
+ * - ambiguous -> terminal manual-correlation outcome; never guessed by the LLM
+ * - unverified / not_detected -> invoke the LLM false-positive intelligence layer
+ * - failed / skipped -> preserve the processing outcome
  */
-export function transitionAfterLlm(llmResult: FindingResult): HybridTransitionAction {
-  // If finding was skipped or failed, no TruffleHog needed
-  if (llmResult.status === "skipped" || llmResult.status === "failed") {
-    const normalizedResult: FindingResult = {
-      ...llmResult,
-      trufflehogResult: llmResult.trufflehogResult ?? "",
-      trufflehogDetector: llmResult.trufflehogDetector ?? "",
-    };
-    return {
-      type: llmResult.status === "skipped" ? "SKIP_NO_TRUFFLEHOG" : "FAIL_NO_TRUFFLEHOG",
-      result: normalizedResult,
-    };
+export function transitionAfterVerification(
+  verificationResult: FindingResult
+): VerificationFirstTransition {
+  if (verificationResult.status === "failed") {
+    return { type: "FAIL_VERIFICATION", result: verificationResult };
   }
 
-  // LLM completed successfully: evaluate 3-valued classification
-  if (llmResult.status === "completed") {
-    if (llmResult.llmClassification === "false_positive") {
-      return {
-        type: "COMPLETE_NO_TRUFFLEHOG",
-        result: {
-          ...llmResult,
-          trufflehogResult: "",
-          trufflehogDetector: "",
-          error: "",
-        },
-      };
-    }
+  if (verificationResult.status === "skipped") {
+    return { type: "SKIP_VERIFICATION", result: verificationResult };
+  }
 
-    if (
-      llmResult.llmClassification === "likely_secret" ||
-      llmResult.llmClassification === "uncertain"
-    ) {
-      return {
-        type: "INVOKE_TRUFFLEHOG",
-        finding: llmResult.findingRef,
-        llmResult,
-      };
+  if (verificationResult.status === "completed") {
+    switch (verificationResult.trufflehogResult) {
+      case "verified":
+        return { type: "COMPLETE_VERIFIED", result: verificationResult };
+      case "unknown":
+        return { type: "COMPLETE_UNKNOWN", result: verificationResult };
+      case "ambiguous":
+        return { type: "COMPLETE_AMBIGUOUS", result: verificationResult };
+      case "unverified":
+      case "not_detected":
+        return {
+          type: "INVOKE_LLM",
+          finding: verificationResult.findingRef,
+          verificationResult,
+        };
     }
   }
 
-  // Fallback if status is completed but classification is missing/unexpected
   return {
-    type: "FAIL_NO_TRUFFLEHOG",
+    type: "FAIL_VERIFICATION",
     result: {
-      ...llmResult,
+      ...verificationResult,
       status: "failed",
-      error: llmResult.error || "missing_or_unrecognized_llm_classification",
-      trufflehogResult: "",
-      trufflehogDetector: "",
+      error:
+        verificationResult.error || "missing_or_unrecognized_trufflehog_result",
     },
   };
 }
@@ -84,96 +76,141 @@ export function transitionAfterLlm(llmResult: FindingResult): HybridTransitionAc
 export interface HybridFlowOptions {
   claudeAnalyzer: ClaudeAnalyzer;
   trufflehogOptions?: RunTruffleHogOptions;
+  /** Backwards-compatible executor injection used by existing callers/tests. */
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
 }
 
+function mergeLlmWithVerification(
+  llmResult: FindingResult,
+  verificationResult: FindingResult
+): FindingResult {
+  return {
+    ...llmResult,
+    findingRef: verificationResult.findingRef,
+    trufflehogResult: verificationResult.trufflehogResult,
+    trufflehogDetector: verificationResult.trufflehogDetector,
+    error: llmResult.error || verificationResult.error || "",
+  };
+}
+
 /**
- * Executes the Hybrid analysis flow for a single FileWorkItem:
- * 1. Analyzes all pending findings using ClaudeAnalyzer.
- * 2. Evaluates state machine transitions for each finding.
- * 3. Findings classified as `false_positive`, failed, or skipped are finalized without scanner invocation.
- * 4. Findings classified as `likely_secret` or `uncertain` trigger TruffleHog execution.
- * 5. Combines LLM and TruffleHog result columns in terminal states.
+ * Executes one verification-first Hybrid File Work Item:
+ *
+ * 1. Run TruffleHog once for every pending finding in the fetched file.
+ * 2. Finalize verified, unknown, and ambiguous results without invoking the LLM.
+ * 3. Send only unverified and not-detected findings to the LLM.
+ * 4. Merge the LLM classification without allowing it to replace scanner evidence.
  */
 export async function executeHybridFlow(
   workItem: FileWorkItem,
   localFilePath: string,
   options: HybridFlowOptions
 ): Promise<FindingResult[]> {
-  // Step 1: Run LLM analysis on the work item
-  const llmResults = await options.claudeAnalyzer.analyzeWorkItem(workItem, localFilePath);
-
-  // Step 2: Evaluate state machine transitions
   const resultMap = new Map<FindingRef, FindingResult>();
-  const needsTrufflehog: { finding: FindingRef; llmResult: FindingResult }[] = [];
+  const pendingFindings = workItem.findings.filter(
+    (finding) => finding.initialStatus === "pending"
+  );
 
-  for (const res of llmResults) {
-    const transition = transitionAfterLlm(res);
-    switch (transition.type) {
-      case "COMPLETE_NO_TRUFFLEHOG":
-      case "FAIL_NO_TRUFFLEHOG":
-      case "SKIP_NO_TRUFFLEHOG":
-        resultMap.set(transition.result.findingRef, transition.result);
-        break;
-      case "INVOKE_TRUFFLEHOG":
-        needsTrufflehog.push({
-          finding: transition.finding,
-          llmResult: transition.llmResult,
-        });
-        break;
+  for (const finding of workItem.findings) {
+    if (finding.initialStatus !== "pending") {
+      resultMap.set(finding, buildNonPendingFindingResult(finding));
     }
   }
 
-  // Step 3: Run TruffleHog conditionally if any findings require verification
-  if (needsTrufflehog.length > 0) {
-    try {
-      const thOpts: RunTruffleHogOptions = {
-        ...options.trufflehogOptions,
-        execFn: options.trufflehogOptions?.execFn ?? options.trufflehogExecFn,
-      };
-      const detections = await runTruffleHog(localFilePath, thOpts);
+  if (pendingFindings.length === 0) {
+    return workItem.findings.map((finding) => resultMap.get(finding)!);
+  }
 
-      const thResults = matchDetectionsToFindings(
-        needsTrufflehog.map((item) => item.finding),
-        detections
+  let verificationResults: FindingResult[];
+  try {
+    const trufflehogOptions: RunTruffleHogOptions = {
+      ...options.trufflehogOptions,
+      execFn: options.trufflehogOptions?.execFn ?? options.trufflehogExecFn,
+    };
+    const detections = await runTruffleHog(localFilePath, trufflehogOptions);
+    verificationResults = matchDetectionsToFindings(pendingFindings, detections);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const finding of pendingFindings) {
+      resultMap.set(finding, {
+        findingRef: finding,
+        status: "failed",
+        trufflehogResult: "",
+        trufflehogDetector: "",
+        error: message,
+      });
+    }
+    return workItem.findings.map((finding) => resultMap.get(finding)!);
+  }
+
+  const needsLlm: Array<{
+    finding: FindingRef;
+    verificationResult: FindingResult;
+  }> = [];
+
+  for (const verificationResult of verificationResults) {
+    const transition = transitionAfterVerification(verificationResult);
+    if (transition.type === "INVOKE_LLM") {
+      needsLlm.push({
+        finding: transition.finding,
+        verificationResult: transition.verificationResult,
+      });
+    } else {
+      resultMap.set(transition.result.findingRef, transition.result);
+    }
+  }
+
+  if (needsLlm.length > 0) {
+    const llmWorkItem: FileWorkItem = {
+      ...workItem,
+      findings: needsLlm.map(({ finding }) => finding),
+    };
+
+    try {
+      const llmResults = await options.claudeAnalyzer.analyzeWorkItem(
+        llmWorkItem,
+        localFilePath
+      );
+      const llmResultMap = new Map(
+        llmResults.map((result) => [result.findingRef, result])
       );
 
-      for (let i = 0; i < needsTrufflehog.length; i++) {
-        const { llmResult } = needsTrufflehog[i]!;
-        const thRes = thResults[i]!;
-
-        resultMap.set(llmResult.findingRef, {
-          findingRef: llmResult.findingRef,
-          status: thRes.status,
-          trufflehogResult: thRes.trufflehogResult,
-          trufflehogDetector: thRes.trufflehogDetector,
-          llmClassification: llmResult.llmClassification,
-          llmReason: llmResult.llmReason,
-          llmConfidence: llmResult.llmConfidence,
-          error: thRes.error || llmResult.error || "",
-        });
+      for (const { finding, verificationResult } of needsLlm) {
+        const llmResult = llmResultMap.get(finding);
+        if (!llmResult) {
+          resultMap.set(finding, {
+            ...verificationResult,
+            status: "failed",
+            error: "missing_llm_result",
+          });
+          continue;
+        }
+        resultMap.set(
+          finding,
+          mergeLlmWithVerification(llmResult, verificationResult)
+        );
       }
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      for (const { llmResult } of needsTrufflehog) {
-        resultMap.set(llmResult.findingRef, {
-          findingRef: llmResult.findingRef,
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const { finding, verificationResult } of needsLlm) {
+        resultMap.set(finding, {
+          ...verificationResult,
           status: "failed",
-          trufflehogResult: "",
-          trufflehogDetector: "",
-          llmClassification: llmResult.llmClassification,
-          llmReason: llmResult.llmReason,
-          llmConfidence: llmResult.llmConfidence,
-          error: errMsg,
+          error: `LLM analysis failed: ${message}`,
         });
       }
     }
   }
 
-  // Step 4: Return findings preserving original FileWorkItem order
-  return workItem.findings.map((f) => {
-    const res = resultMap.get(f);
-    if (res) return res;
-    return buildNonPendingFindingResult(f);
+  return workItem.findings.map((finding) => {
+    const result = resultMap.get(finding);
+    if (result) return result;
+    return {
+      findingRef: finding,
+      status: "failed",
+      trufflehogResult: "",
+      trufflehogDetector: "",
+      error: "hybrid_state_machine_missing_result",
+    };
   });
 }

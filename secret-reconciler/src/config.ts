@@ -116,10 +116,10 @@ const configSchema = z.object({
       message: `Must be one of: "trufflehog-only", "llm-only", "hybrid".`,
     }),
   }),
-  ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY must not be empty."),
-  ANTHROPIC_MODEL: z.string().min(1, "ANTHROPIC_MODEL must not be empty."),
-  MAX_TOKENS_PER_REQUEST: rangedIntString(1),
-  MAX_LLM_CALLS_PER_FILE: rangedIntString(1),
+  ANTHROPIC_API_KEY: optionalTrimmedString,
+  ANTHROPIC_MODEL: optionalTrimmedString,
+  MAX_TOKENS_PER_REQUEST: optionalPositiveInt,
+  MAX_LLM_CALLS_PER_FILE: optionalPositiveInt,
   GITHUB_PAT: z
     .string()
     .min(1, "GITHUB_PAT must not be empty.")
@@ -156,6 +156,25 @@ const configSchema = z.object({
   TRUFFLEHOG_CONFIG_PATH: optionalTrimmedString,
   CHECK_IDS: optionalCheckIds,
   LIMIT: optionalPositiveInt,
+}).superRefine((env, ctx) => {
+  if (env.FLOW === "trufflehog-only") return;
+
+  const requiredLlmFields = [
+    ["ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY],
+    ["ANTHROPIC_MODEL", env.ANTHROPIC_MODEL],
+    ["MAX_TOKENS_PER_REQUEST", env.MAX_TOKENS_PER_REQUEST],
+    ["MAX_LLM_CALLS_PER_FILE", env.MAX_LLM_CALLS_PER_FILE],
+  ] as const;
+
+  for (const [field, value] of requiredLlmFields) {
+    if (value === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} is required when FLOW=${env.FLOW}.`,
+      });
+    }
+  }
 });
 
 
@@ -169,10 +188,14 @@ const configSchema = z.object({
  */
 export interface AppConfig {
   flow: Flow;
-  anthropicApiKey: string;
-  anthropicModel: string;
-  maxTokensPerRequest: number;
-  maxLlmCallsPerFile: number;
+  /** Required only for `llm-only` and `hybrid` flows. */
+  anthropicApiKey?: string;
+  /** Required only for `llm-only` and `hybrid` flows. */
+  anthropicModel?: string;
+  /** Required only for `llm-only` and `hybrid` flows. */
+  maxTokensPerRequest?: number;
+  /** Required only for `llm-only` and `hybrid` flows. */
+  maxLlmCallsPerFile?: number;
   /** One or more GitHub PATs parsed from the comma-separated GITHUB_PAT env var. */
   githubPats: string[];
   azureDevOpsPat?: string;

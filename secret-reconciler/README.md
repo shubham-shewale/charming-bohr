@@ -28,7 +28,7 @@
 - 🧠 **Three Analysis Flows**:
   - `trufflehog-only`: High-speed local verification via TruffleHog CLI.
   - `llm-only`: Deep semantic analysis via Anthropic Claude 3.5 Sonnet to eliminate false positives (test fixtures, docs, dummy values).
-  - `hybrid`: Cost-optimized triage (LLM first, auto-escalates to TruffleHog only for `likely_secret` or `uncertain` classifications).
+  - `hybrid`: Verification-first analysis (TruffleHog always runs; the LLM is used only for `unverified` or `not_detected` findings).
 - 🔄 **Output-as-Input Resume**: Directly re-feed an output CSV to resume interrupted jobs or retry failed rows without separate checkpoint files.
 - 🛡️ **Graceful Cancellation**: Intercepts `SIGINT` / `SIGTERM` signals to finish in-flight requests and flush an uncorrupted CSV before exiting.
 - 💰 **Cost & Token Tracking**: Real-time progress updates tracking input/output tokens and estimated USD expenditure.
@@ -65,26 +65,22 @@ flowchart TD
 
 ### 2. Hybrid Flow State Machine
 
-In `hybrid` flow, the LLM acts as the first-line triage engine. Expensive secret verification scans are executed only when semantic context indicates a potential or uncertain secret:
+In `hybrid` flow, TruffleHog owns credential detection and validity. Verified, verifier-error (`unknown`), and unsafe-correlation (`ambiguous`) results are terminal and never sent to the LLM. Only `unverified` and `not_detected` findings reach the LLM false-positive intelligence layer:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> LLM_Analysis: Build context with surrounding lines
-    
-    LLM_Analysis --> Complete_No_Trufflehog: false_positive
-    LLM_Analysis --> Invoke_TruffleHog: likely_secret
-    LLM_Analysis --> Invoke_TruffleHog: uncertain
-    LLM_Analysis --> Fail_No_TruffleHog: llm_invalid_output / error
-    LLM_Analysis --> Skip_No_TruffleHog: file skipped
-    
-    Invoke_TruffleHog --> Complete_With_Both: TruffleHog (verified / unverified / unknown / not_detected / ambiguous)
-    Invoke_TruffleHog --> Fail_TruffleHog: TruffleHog execution error
-    
-    Complete_No_Trufflehog --> [*]
+    [*] --> TruffleHog
+    TruffleHog --> Complete_Verified: verified
+    TruffleHog --> Manual_Review: unknown / ambiguous
+    TruffleHog --> LLM_Analysis: unverified / not_detected
+    TruffleHog --> Failed: execution error
+    LLM_Analysis --> Complete_With_Both: classification
+    LLM_Analysis --> Failed_With_Evidence: LLM error
+    Complete_Verified --> [*]
+    Manual_Review --> [*]
     Complete_With_Both --> [*]
-    Fail_No_TruffleHog --> [*]
-    Skip_No_TruffleHog --> [*]
-    Fail_TruffleHog --> [*]
+    Failed --> [*]
+    Failed_With_Evidence --> [*]
 ```
 
 ---
@@ -178,7 +174,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 
 | Flow | Strengths | Ideal For | LLM Used? | Scanner Used? |
 | :--- | :--- | :--- | :--- | :--- |
-| **`hybrid`** *(Recommended)* | Balances deep semantic reasoning with cryptographic verification while keeping API costs low. | Production scans containing thousands of mixed alerts. | ✅ (Triage) | ✅ (Conditional) |
+| **`hybrid`** *(Recommended)* | Preserves deterministic scanner evidence first, then adds semantic false-positive context only where needed. | Production scans containing thousands of mixed alerts. | ✅ (Conditional) | ✅ (Always) |
 | **`llm-only`** | Best for understanding complex code context, documentation, mock tests, and template files. | Eliminating false positives where regex scanners trigger on test fixtures. | ✅ | ❌ |
 | **`trufflehog-only`** | Ultra-fast, zero API cost, validates live detector endpoints. | Quick verification runs without external LLM dependencies. | ❌ | ✅ |
 

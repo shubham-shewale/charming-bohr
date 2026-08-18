@@ -51,13 +51,49 @@ export interface ClaudeAnalyzerOptions {
   costTracker?: CostTracker;
 }
 
+interface ClaudeAnalyzerConfig {
+  anthropicApiKey: string;
+  anthropicModel: string;
+  maxTokensPerRequest: number;
+  maxLlmCallsPerFile: number;
+  surroundingLines: number;
+  maxFileSizeKb: number;
+}
+
 export class ClaudeAnalyzer {
-  private config: AppConfig;
+  private config: ClaudeAnalyzerConfig;
   private client: AnthropicClientLike;
   private costTracker: CostTracker;
 
   constructor(options: ClaudeAnalyzerOptions) {
-    this.config = options.config;
+    const {
+      anthropicApiKey,
+      anthropicModel,
+      maxTokensPerRequest,
+      maxLlmCallsPerFile,
+      surroundingLines,
+      maxFileSizeKb,
+    } = options.config;
+
+    if (
+      !anthropicApiKey ||
+      !anthropicModel ||
+      maxTokensPerRequest === undefined ||
+      maxLlmCallsPerFile === undefined
+    ) {
+      throw new Error(
+        "LLM configuration is required for ClaudeAnalyzer"
+      );
+    }
+
+    this.config = {
+      anthropicApiKey,
+      anthropicModel,
+      maxTokensPerRequest,
+      maxLlmCallsPerFile,
+      surroundingLines,
+      maxFileSizeKb,
+    };
     this.costTracker = options.costTracker ?? new CostTracker();
 
     if (options.anthropicClient) {

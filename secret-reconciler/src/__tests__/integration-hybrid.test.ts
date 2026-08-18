@@ -1,16 +1,16 @@
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import path from "node:path";
 import { parse } from "csv-parse/sync";
-import { runPipeline } from "../pipeline.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import type { AnthropicClientLike } from "../llm/analyzer.js";
+import { runPipeline } from "../pipeline.js";
 
-describe("End-to-End Hybrid Pipeline Integration Test", () => {
+describe("End-to-End verification-first Hybrid Pipeline", () => {
   let tmpDir: string;
 
-  const mockConfig: AppConfig = {
+  const config: AppConfig = {
     flow: "hybrid",
     anthropicApiKey: "test-anthropic-key",
     anthropicModel: "claude-3-haiku-20240307",
@@ -26,523 +26,279 @@ describe("End-to-End Hybrid Pipeline Integration Test", () => {
     githubRateLimitMaxRetries: 2,
   };
 
+  const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "secret-reconciler-hybrid-integration-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "secret-reconciler-hybrid-"));
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("mock LLM returns false_positive -> assert TruffleHog NOT called and status=completed", async () => {
-    const inputCsv = path.join(tmpDir, "input.csv");
-    const outputCsv = path.join(tmpDir, "output.csv");
-    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
-
-    const csvContent = `Rule ID,SCM Link,Severity
-rule-mock-data,https://github.com/my-org/my-repo/blob/${sha}/src/test.js#L5-L10,low
-`;
-    fs.writeFileSync(inputCsv, csvContent);
-
-    const mockFetchProvider = vi.fn().mockResolvedValue(`// Line 1
-// Line 2
-// Line 3
-// Line 4
-const DUMMY_API_KEY = "test_key_mock_12345";
-// Line 6
-// Line 7
-// Line 8
-`);
-
-    const mockAnthropicClient: AnthropicClientLike = {
-      messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                classifications: [
-                  {
-                    findingIndex: 0,
-                    classification: "false_positive",
-                    confidence: 0.99,
-                    reason: "Obvious dummy test key in test file",
-                  },
-                ],
-              }),
-            },
-          ],
-          usage: { input_tokens: 150, output_tokens: 50 },
-        }),
-      },
-    };
-
-    const mockTruffleHogExec = vi.fn();
-
-    const summary = await runPipeline([inputCsv], {
-      config: mockConfig,
-      output: outputCsv,
-      tempDir: path.join(tmpDir, "temp_files"),
-      fetchProvider: mockFetchProvider,
-      anthropicClient: mockAnthropicClient,
-      trufflehogExecFn: mockTruffleHogExec,
-    });
-
-    expect(summary.totalFindings).toBe(1);
-    expect(summary.completed).toBe(1);
-    expect(summary.falsePositive).toBe(1);
-    expect(summary.likelySecret).toBe(0);
-    expect(summary.uncertain).toBe(0);
-    expect(summary.verified).toBe(0);
-    expect(summary.failed).toBe(0);
-
-    // TruffleHog must NOT be called for false_positive
-    expect(mockTruffleHogExec).not.toHaveBeenCalled();
-
-    // Verify CSV output
-    const writtenRaw = fs.readFileSync(outputCsv, "utf-8");
-    const records = parse(writtenRaw, { columns: true });
-
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      "Rule ID": "rule-mock-data",
-      status: "completed",
-      llm_classification: "false_positive",
-      llm_reason: "Obvious dummy test key in test file",
-      llm_confidence: "0.99",
-      trufflehog_result: "",
-      trufflehog_detector: "",
-      error: "",
-    });
+  const paths = (name: string) => ({
+    input: path.join(tmpDir, `${name}-input.csv`),
+    output: path.join(tmpDir, `${name}-output.csv`),
   });
 
-  it("mock LLM returns uncertain -> assert TruffleHog IS called and both columns populated", async () => {
-    const inputCsv = path.join(tmpDir, "input.csv");
-    const outputCsv = path.join(tmpDir, "output.csv");
-    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+  const readOutput = (output: string): Record<string, string>[] =>
+    parse(fs.readFileSync(output, "utf8"), { columns: true });
 
-    const csvContent = `Rule ID,SCM Link,Severity
-rule-generic-token,https://github.com/my-org/my-repo/blob/${sha}/src/auth.js#L10-L15,high
-`;
-    fs.writeFileSync(inputCsv, csvContent);
+  it("lets verified evidence win and never calls the LLM", async () => {
+    const { input, output } = paths("verified");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link\nrule-aws,https://github.com/org/repo/blob/${sha}/src/app.js#L10\n`
+    );
 
-    const mockFetchProvider = vi.fn().mockResolvedValue(`// Line 1-9
-const TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"; // line 12
-// Line 13-30
-`);
-
-    const mockAnthropicClient: AnthropicClientLike = {
-      messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                classifications: [
-                  {
-                    findingIndex: 0,
-                    classification: "uncertain",
-                    confidence: 0.6,
-                    reason: "Need verification by scanner",
-                  },
-                ],
-              }),
-            },
-          ],
-          usage: { input_tokens: 180, output_tokens: 60 },
+    const create = vi.fn().mockResolvedValue({
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          classifications: [{
+            findingIndex: 0,
+            classification: "false_positive",
+            confidence: 1,
+            reason: "would be unsafe if it overrode verification",
+          }],
         }),
-      },
-    };
-
-    const mockTruffleHogExec = vi.fn().mockResolvedValue({
-      stdout: JSON.stringify({
-        DetectorName: "GitHub",
-        Verified: true,
-        SourceMetadata: {
-          Data: {
-            Filesystem: {
-              line: 12,
-            },
-          },
-        },
-      }),
-      stderr: "",
+      }],
     });
-
-    const summary = await runPipeline([inputCsv], {
-      config: mockConfig,
-      output: outputCsv,
-      tempDir: path.join(tmpDir, "temp_files"),
-      fetchProvider: mockFetchProvider,
-      anthropicClient: mockAnthropicClient,
-      trufflehogExecFn: mockTruffleHogExec,
-    });
-
-    expect(summary.totalFindings).toBe(1);
-    expect(summary.completed).toBe(1);
-    expect(summary.uncertain).toBe(1);
-    expect(summary.verified).toBe(1);
-
-    // TruffleHog MUST be called for uncertain
-    expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
-
-    // Verify CSV output
-    const writtenRaw = fs.readFileSync(outputCsv, "utf-8");
-    const records = parse(writtenRaw, { columns: true });
-
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      "Rule ID": "rule-generic-token",
-      status: "completed",
-      llm_classification: "uncertain",
-      llm_reason: "Need verification by scanner",
-      llm_confidence: "0.6",
-      trufflehog_result: "verified",
-      trufflehog_detector: "GitHub",
-      error: "",
-    });
-  });
-
-  it("handles mixed findings in same file: some false_positive, some uncertain, some likely_secret, some failed", async () => {
-    const inputCsv = path.join(tmpDir, "input.csv");
-    const outputCsv = path.join(tmpDir, "output.csv");
-    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
-
-    const csvContent = `Rule ID,SCM Link
-rule-fp,https://github.com/my-org/my-repo/blob/${sha}/src/app.js#L5-L10
-rule-unc,https://github.com/my-org/my-repo/blob/${sha}/src/app.js#L20-L25
-rule-likely,https://github.com/my-org/my-repo/blob/${sha}/src/app.js#L40-L45
-rule-malformed,https://github.com/my-org/my-repo/blob/${sha}/src/app.js#L60-L65
-`;
-    fs.writeFileSync(inputCsv, csvContent);
-
-    const mockFetchProvider = vi.fn().mockResolvedValue(`// 1-4
-const FP = "test-placeholder"; // 5
-// 6-19
-const UNC = "custom-auth-token"; // 22
-// 23-39
-const AWS_KEY = "AKIAIOSFODNN7EXAMPLE"; // 42
-// 43-59
-const MAL = "some-key"; // 62
-// 63-70
-`);
-
-    // Mock Anthropic client returning classifications for indices 0, 1, 2 only (3 is omitted -> partial failure)
-    const mockAnthropicClient: AnthropicClientLike = {
-      messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                classifications: [
-                  {
-                    findingIndex: 0,
-                    classification: "false_positive",
-                    confidence: 0.98,
-                    reason: "Known test placeholder string",
-                  },
-                  {
-                    findingIndex: 1,
-                    classification: "uncertain",
-                    confidence: 0.55,
-                    reason: "Custom auth header format unknown",
-                  },
-                  {
-                    findingIndex: 2,
-                    classification: "likely_secret",
-                    confidence: 0.99,
-                    reason: "AWS access key structure",
-                  },
-                ],
-              }),
-            },
-          ],
-          usage: { input_tokens: 300, output_tokens: 120 },
-        }),
-      },
-    };
-
-    // TruffleHog detects AWS key on line 42 as unverified
-    const mockTruffleHogExec = vi.fn().mockResolvedValue({
+    const anthropicClient: AnthropicClientLike = { messages: { create } };
+    const trufflehogExecFn = vi.fn().mockResolvedValue({
       stdout: JSON.stringify({
         DetectorName: "AWS",
-        Verified: false,
-        SourceMetadata: {
-          Data: {
-            Filesystem: {
-              line: 42,
-            },
-          },
-        },
+        Verified: true,
+        SourceMetadata: { Data: { Filesystem: { line: 10 } } },
       }),
       stderr: "",
     });
 
-    const summary = await runPipeline([inputCsv], {
-      config: mockConfig,
-      output: outputCsv,
-      tempDir: path.join(tmpDir, "temp_files"),
-      fetchProvider: mockFetchProvider,
-      anthropicClient: mockAnthropicClient,
-      trufflehogExecFn: mockTruffleHogExec,
+    const summary = await runPipeline([input], {
+      config,
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async () => "const key = 'candidate';\n",
+      anthropicClient,
+      trufflehogExecFn,
     });
 
-    expect(summary.totalFindings).toBe(4);
-    expect(summary.completed).toBe(3);
-    expect(summary.failed).toBe(1);
-    expect(summary.falsePositive).toBe(1);
-    expect(summary.uncertain).toBe(1);
-    expect(summary.likelySecret).toBe(1);
-    expect(summary.unverified).toBe(1);
-    expect(summary.notDetected).toBe(1);
-    expect(summary.llmInvalidOutput).toBe(1);
-
-    // TruffleHog was invoked once for this file (because rule-unc and rule-likely needed it)
-    expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
-
-    // Verify CSV records
-    const writtenRaw = fs.readFileSync(outputCsv, "utf-8");
-    const records = parse(writtenRaw, { columns: true });
-
-    expect(records).toHaveLength(4);
-
-    // Row 0: false_positive
-    expect(records[0]).toMatchObject({
-      "Rule ID": "rule-fp",
-      status: "completed",
-      llm_classification: "false_positive",
-      llm_reason: "Known test placeholder string",
-      llm_confidence: "0.98",
-      trufflehog_result: "",
-      trufflehog_detector: "",
-      error: "",
-    });
-
-    // Row 1: uncertain -> TruffleHog found nothing -> not_detected
-    expect(records[1]).toMatchObject({
-      "Rule ID": "rule-unc",
-      status: "completed",
-      llm_classification: "uncertain",
-      llm_reason: "Custom auth header format unknown",
-      llm_confidence: "0.55",
-      trufflehog_result: "not_detected",
-      trufflehog_detector: "",
-      error: "",
-    });
-
-    // Row 2: likely_secret -> TruffleHog found unverified AWS key
-    expect(records[2]).toMatchObject({
-      "Rule ID": "rule-likely",
-      status: "completed",
-      llm_classification: "likely_secret",
-      llm_reason: "AWS access key structure",
-      llm_confidence: "0.99",
-      trufflehog_result: "unverified",
+    expect(trufflehogExecFn).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ completed: 1, verified: 1, falsePositive: 0 });
+    expect(readOutput(output)[0]).toMatchObject({
+      trufflehog_result: "verified",
       trufflehog_detector: "AWS",
+      llm_classification: "",
       error: "",
-    });
-
-    // Row 3: failed LLM parse -> failed, llm_invalid_output, no TruffleHog
-    expect(records[3]).toMatchObject({
-      "Rule ID": "rule-malformed",
-      status: "failed",
-      llm_classification: "llm_invalid_output",
-      trufflehog_result: "",
-      trufflehog_detector: "",
-      error: "llm_invalid_output",
     });
   });
 
-  it("selectively invokes TruffleHog across multiple files only for files with uncertain/likely_secret findings", async () => {
-    const inputCsv = path.join(tmpDir, "multi_file.csv");
-    const outputCsv = path.join(tmpDir, "multi_file_out.csv");
-    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+  it("invokes the LLM after a clean not-detected verification result", async () => {
+    const { input, output } = paths("not-detected");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link\nrule-fixture,https://github.com/org/repo/blob/${sha}/test/fixture.js#L5\n`
+    );
 
-    const csvContent = `Rule ID,SCM Link
-rule-fp-only,https://github.com/my-org/my-repo/blob/${sha}/src/fp-file.js#L5-L10
-rule-secret,https://github.com/my-org/my-repo/blob/${sha}/src/secret-file.js#L15-L20
-`;
-    fs.writeFileSync(inputCsv, csvContent);
-
-    const mockFetchProvider = vi.fn().mockImplementation(async (source) => {
-      if (source.filePath.includes("fp-file")) {
-        return "const x = 'safe_mock_data';\n";
-      }
-      return "const SECRET = 'ghp_secret12345';\n";
+    const callOrder: string[] = [];
+    const trufflehogExecFn = vi.fn().mockImplementation(async () => {
+      callOrder.push("trufflehog");
+      return { stdout: "", stderr: "" };
     });
-
-    const mockAnthropicClient: AnthropicClientLike = {
-      messages: {
-        create: vi.fn().mockImplementation(async (params) => {
-          const contentStr = params.messages[0]?.content || "";
-          if (contentStr.includes("fp-file.js")) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    classifications: [
-                      {
-                        findingIndex: 0,
-                        classification: "false_positive",
-                        confidence: 0.99,
-                        reason: "Safe fixture",
-                      },
-                    ],
-                  }),
-                },
-              ],
-              usage: { input_tokens: 100, output_tokens: 30 },
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  classifications: [
-                    {
-                      findingIndex: 0,
-                      classification: "likely_secret",
-                      confidence: 0.95,
-                      reason: "GitHub personal token pattern",
-                    },
-                  ],
-                }),
-              },
-            ],
-            usage: { input_tokens: 100, output_tokens: 30 },
-          };
-        }),
-      },
-    };
-
-    const scannedFiles: string[] = [];
-    const mockTruffleHogExec = vi.fn().mockImplementation(async (cmd, args) => {
-      const fileArg = args[1];
-      scannedFiles.push(fileArg);
+    const create = vi.fn().mockImplementation(async () => {
+      callOrder.push("llm");
       return {
-        stdout: JSON.stringify({
-          DetectorName: "GitHub",
-          Verified: true,
-          SourceMetadata: {
-            Data: {
-              Filesystem: {
-                line: 18,
-              },
-            },
-          },
-        }),
-        stderr: "",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            classifications: [{
+              findingIndex: 0,
+              classification: "false_positive",
+              confidence: 0.99,
+              reason: "Test fixture placeholder",
+            }],
+          }),
+        }],
+        usage: { input_tokens: 100, output_tokens: 25 },
       };
     });
 
-    const summary = await runPipeline([inputCsv], {
-      config: mockConfig,
-      output: outputCsv,
-      tempDir: path.join(tmpDir, "temp_files"),
-      fetchProvider: mockFetchProvider,
-      anthropicClient: mockAnthropicClient,
-      trufflehogExecFn: mockTruffleHogExec,
+    const summary = await runPipeline([input], {
+      config,
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async () => "const token = 'test-placeholder';\n",
+      anthropicClient: { messages: { create } },
+      trufflehogExecFn,
     });
 
-    expect(summary.totalFindings).toBe(2);
-    expect(summary.completed).toBe(2);
-    expect(summary.falsePositive).toBe(1);
-    expect(summary.likelySecret).toBe(1);
-    expect(summary.verified).toBe(1);
-
-    // TruffleHog should have been called ONLY once across all files (for secret-file.js, NOT for fp-file.js)
-    expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
-    expect(scannedFiles).toHaveLength(1);
-    expect(scannedFiles[0]).toContain("secret-file.js");
+    expect(callOrder).toEqual(["trufflehog", "llm"]);
+    expect(summary).toMatchObject({ completed: 1, notDetected: 1, falsePositive: 1 });
+    expect(readOutput(output)[0]).toMatchObject({
+      trufflehog_result: "not_detected",
+      llm_classification: "false_positive",
+      llm_reason: "Test fixture placeholder",
+      error: "",
+    });
   });
 
-  it("propagates TruffleHog verification mode, user-agent suffix, and timeout in hybrid flow", async () => {
-    const inputCsv = path.join(tmpDir, "hybrid-th-config.csv");
-    const outputCsv = path.join(tmpDir, "hybrid-th-config-out.csv");
+  it("keeps verification network failures unknown and bypasses the LLM", async () => {
+    const { input, output } = paths("unknown");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link\nrule-internal,https://github.com/org/repo/blob/${sha}/src/internal.js#L15\n`
+    );
 
-    const sha = "1234567890abcdef1234567890abcdef12345678";
-    const csvContent = `Rule ID,SCM Link\nrule-uncertain,https://github.com/my-org/my-repo/blob/${sha}/src/auth.js#L10-L20\n`;
-    fs.writeFileSync(inputCsv, csvContent, "utf-8");
-
-    const mockFetchProvider = async () => "const token = 'xyz';";
-
-    const mockAnthropicClient: AnthropicClientLike = {
-      messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                classifications: [
-                  {
-                    findingIndex: 0,
-                    classification: "uncertain",
-                    confidence: 0.5,
-                    reason: "Need scanner verification",
-                  },
-                ],
-              }),
-            },
-          ],
-          usage: { input_tokens: 50, output_tokens: 20 },
+    const create = vi.fn();
+    const summary = await runPipeline([input], {
+      config,
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async () => "const token = 'internal';\n",
+      anthropicClient: { messages: { create } },
+      trufflehogExecFn: vi.fn().mockResolvedValue({
+        stdout: JSON.stringify({
+          DetectorName: "InternalToken",
+          Verified: false,
+          VerificationError: "verifier endpoint timed out",
+          SourceMetadata: { Data: { Filesystem: { line: 15 } } },
         }),
-      },
-    };
+        stderr: "",
+      }),
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ completed: 1, unknown: 1, falsePositive: 0 });
+    expect(readOutput(output)[0]).toMatchObject({
+      trufflehog_result: "unknown",
+      trufflehog_detector: "InternalToken",
+      llm_classification: "",
+    });
+  });
+
+  it("routes only unverified and not-detected findings from a mixed file to the LLM", async () => {
+    const { input, output } = paths("mixed");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link
+rule-verified,https://github.com/org/repo/blob/${sha}/src/app.js#L10
+rule-unverified,https://github.com/org/repo/blob/${sha}/src/app.js#L30
+rule-unknown,https://github.com/org/repo/blob/${sha}/src/app.js#L50
+rule-gap,https://github.com/org/repo/blob/${sha}/src/app.js#L70
+`
+    );
+
+    const trufflehogExecFn = vi.fn().mockResolvedValue({
+      stdout: [
+        { DetectorName: "AWS", Verified: true, SourceMetadata: { Data: { Filesystem: { line: 10 } } } },
+        { DetectorName: "Slack", Verified: false, SourceMetadata: { Data: { Filesystem: { line: 30 } } } },
+        { DetectorName: "Internal", Verified: false, VerificationError: "timeout", SourceMetadata: { Data: { Filesystem: { line: 50 } } } },
+      ].map((record) => JSON.stringify(record)).join("\n"),
+      stderr: "",
+    });
+
+    const create = vi.fn().mockResolvedValue({
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          classifications: [
+            { findingIndex: 0, classification: "false_positive", confidence: 0.97, reason: "Fixture" },
+            { findingIndex: 1, classification: "likely_secret", confidence: 0.85, reason: "Detector gap" },
+          ],
+        }),
+      }],
+      usage: { input_tokens: 200, output_tokens: 50 },
+    });
+
+    const summary = await runPipeline([input], {
+      config,
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async () => "// source context\n",
+      anthropicClient: { messages: { create } },
+      trufflehogExecFn,
+    });
+
+    expect(trufflehogExecFn).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(summary).toMatchObject({
+      completed: 4,
+      verified: 1,
+      unverified: 1,
+      unknown: 1,
+      notDetected: 1,
+      falsePositive: 1,
+      likelySecret: 1,
+    });
+
+    const records = readOutput(output);
+    expect(records[0]).toMatchObject({ trufflehog_result: "verified", llm_classification: "" });
+    expect(records[1]).toMatchObject({ trufflehog_result: "unverified", llm_classification: "false_positive" });
+    expect(records[2]).toMatchObject({ trufflehog_result: "unknown", llm_classification: "" });
+    expect(records[3]).toMatchObject({ trufflehog_result: "not_detected", llm_classification: "likely_secret" });
+  });
+
+  it("propagates TruffleHog runtime options before LLM fallback", async () => {
+    const { input, output } = paths("options");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link\nrule-token,https://github.com/org/repo/blob/${sha}/src/auth.js#L10\n`
+    );
 
     let capturedArgs: string[] = [];
-    let capturedOptions: { timeout?: number } = {};
-
-    const mockTruffleHogExec = vi.fn().mockImplementation(async (_cmd, args, opts) => {
+    let capturedTimeout: number | undefined;
+    const trufflehogExecFn = vi.fn().mockImplementation(async (_cmd, args, options) => {
       capturedArgs = args;
-      capturedOptions = opts;
+      capturedTimeout = options.timeout;
       return {
         stdout: JSON.stringify({
           DetectorName: "AuthToken",
           Verified: false,
-          SourceMetadata: {
-            Data: {
-              Filesystem: {
-                line: 10,
-              },
-            },
-          },
+          SourceMetadata: { Data: { Filesystem: { line: 10 } } },
         }),
         stderr: "",
       };
     });
-
-    const hybridThConfig: AppConfig = {
-      ...mockConfig,
-      trufflehogVerificationMode: "no-verification",
-      trufflehogUserAgentSuffix: "SecurityTeamAudit-2026",
-      trufflehogTimeoutSeconds: 90,
-    };
-
-    const summary = await runPipeline([inputCsv], {
-      config: hybridThConfig,
-      output: outputCsv,
-      tempDir: path.join(tmpDir, "temp_files"),
-      fetchProvider: mockFetchProvider,
-      anthropicClient: mockAnthropicClient,
-      trufflehogExecFn: mockTruffleHogExec,
+    const create = vi.fn().mockResolvedValue({
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          classifications: [{
+            findingIndex: 0,
+            classification: "uncertain",
+            confidence: 0.5,
+            reason: "Needs review",
+          }],
+        }),
+      }],
     });
 
-    expect(mockTruffleHogExec).toHaveBeenCalledTimes(1);
-    expect(capturedArgs[0]).toBe("filesystem");
-    expect(capturedArgs[1]).toContain("auth.js");
-    expect(capturedArgs[2]).toBe("--json");
-    expect(capturedArgs[3]).toBe("--results=verified,unverified,unknown");
-    expect(capturedArgs[4]).toBe("--no-update");
-    expect(capturedArgs[5]).toBe("--fail-on-scan-errors");
-    expect(capturedArgs[6]).toBe("--no-verification");
-    expect(capturedArgs[7]).toBe("--user-agent-suffix=SecurityTeamAudit-2026");
-    expect(capturedOptions.timeout).toBe(90000);
+    const summary = await runPipeline([input], {
+      config: {
+        ...config,
+        trufflehogVerificationMode: "no-verification",
+        trufflehogUserAgentSuffix: "SecurityTeamAudit-2026",
+        trufflehogTimeoutSeconds: 90,
+      },
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async () => "const token = 'candidate';\n",
+      anthropicClient: { messages: { create } },
+      trufflehogExecFn,
+    });
 
-    expect(summary.completed).toBe(1);
-    expect(summary.uncertain).toBe(1);
-    expect(summary.unverified).toBe(1);
+    expect(capturedArgs).toEqual([
+      "filesystem",
+      expect.stringContaining("auth.js"),
+      "--json",
+      "--results=verified,unverified,unknown",
+      "--no-update",
+      "--fail-on-scan-errors",
+      "--no-verification",
+      "--user-agent-suffix=SecurityTeamAudit-2026",
+    ]);
+    expect(capturedTimeout).toBe(90000);
+    expect(summary).toMatchObject({ completed: 1, unverified: 1, uncertain: 1 });
   });
 });

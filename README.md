@@ -14,7 +14,7 @@ This repository provides an automated reconciliation tool that:
 3. **Classifies Potential Secrets** across three flexible analysis flows:
    - **`trufflehog-only`**: High-speed, local verification via the TruffleHog CLI scanner.
    - **`llm-only`**: Deep semantic code context analysis using Claude 3.5 Sonnet to distinguish false positives from real secrets.
-   - **`hybrid`**: Cost-effective dual-stage pipeline (LLM triage first; automatic escalation to TruffleHog only for uncertain or likely secrets).
+   - **`hybrid`**: Verification-first dual-stage pipeline (TruffleHog first; LLM false-positive analysis only for unverified or not-detected findings).
 4. **Fine-Grained TruffleHog Execution Controls**:
    - Pinned TruffleHog `3.97.0` runtime contract with startup validation.
    - `TRUFFLEHOG_VERIFICATION_MODE`: Choose between `"all"` (default) and `"no-verification"` (for rapid offline scanning).

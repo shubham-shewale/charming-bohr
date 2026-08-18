@@ -75,7 +75,9 @@ program
     console.log("✓ Configuration loaded successfully.");
     console.log(`  Flow:        ${effectiveConfig.flow}`);
     console.log(`  Concurrency: ${effectiveConfig.concurrency}`);
-    console.log(`  Model:       ${effectiveConfig.anthropicModel}`);
+    if (effectiveConfig.flow !== "trufflehog-only") {
+      console.log(`  Model:       ${effectiveConfig.anthropicModel}`);
+    }
     console.log(`  Check IDs:   ${effectiveConfig.checkIds && effectiveConfig.checkIds.length > 0 ? effectiveConfig.checkIds.join(", ") : "(all)"}`);
     console.log(`  Limit:       ${effectiveConfig.limit !== undefined ? effectiveConfig.limit : "(unlimited)"}`);
     console.log();

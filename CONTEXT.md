@@ -41,7 +41,7 @@ _Avoid_: Retry item, queued item, backlog item
 ### Analysis
 
 **Flow**:
-One of three analysis strategies applied to findings: TruffleHog-only, LLM-only, or Hybrid (LLM first, TruffleHog on demand).
+One of three analysis strategies applied to findings: TruffleHog-only, LLM-only, or Hybrid (TruffleHog first, LLM false-positive analysis only for `unverified` or `not_detected` findings).
 _Avoid_: Mode, strategy, pipeline
 
 **LLM Classification**:
