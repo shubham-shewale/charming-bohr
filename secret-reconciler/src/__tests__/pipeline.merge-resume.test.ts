@@ -91,11 +91,10 @@ const SHARED_KEY = "ghp_123456789012345678901234567890123456"; // line 35
 
     expect(rows).toHaveLength(4);
 
-    // Union of headers should be present
+    // Union of headers should be present (Severity dropped as redundant scanner column)
     expect(Object.keys(rows[0]!)).toEqual([
       "Rule ID",
       "SCM Link",
-      "Severity",
       "Suppressed By",
       "Reason",
       "source_file",

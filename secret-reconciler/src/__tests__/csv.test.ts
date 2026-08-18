@@ -25,11 +25,13 @@ rule-01,https://github.com/my-org/my-repo/blob/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e
     fs.writeFileSync(csvPath, content);
 
     const result = await readFindingsCsv(csvPath);
-    expect(result.headers).toEqual(["Rule ID", "SCM Link", "Severity"]);
+    expect(result.headers).toEqual(["Rule ID", "SCM Link"]);
     expect(result.findings).toHaveLength(1);
 
     const finding = result.findings[0]!;
     expect(finding.initialStatus).toBe("pending");
+    expect(finding.rawRow).not.toHaveProperty("Severity");
+    expect(finding.rawRow).toHaveProperty("Rule ID", "rule-01");
     expect(finding.canonicalSource).toEqual({
       provider: "github",
       org: "my-org",
@@ -225,5 +227,79 @@ https://github.com/org1/repo1/blob/${sha}/file2.js#L5
     const list2 = ["scm_link", "Severity", "STATUS", "Notes"];
     const merged = mergeHeaders(list1, list2);
     expect(merged).toEqual(["Rule ID", "SCM Link", "status", "Severity", "Notes"]);
+  });
+
+  it("drops all redundant scanner columns from headers and rawRow at ingestion", async () => {
+    const csvPath = path.join(tmpDir, "all_dropped.csv");
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    const content = `title,severity,repository,file path,lines,first seen,resource,policy names,Rule ID,SCM Link,Custom Col
+My Secret,high,my-org/my-repo,src/index.js,10-20,2023-01-01,res-1,Default Policy,rule-01,https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20,custom-val
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const result = await readFindingsCsv(csvPath);
+    expect(result.headers).toEqual(["Rule ID", "SCM Link", "Custom Col"]);
+    expect(result.findings).toHaveLength(1);
+
+    const finding = result.findings[0]!;
+    expect(finding.rawRow).toEqual({
+      "Rule ID": "rule-01",
+      "SCM Link": `https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20`,
+      "Custom Col": "custom-val",
+    });
+  });
+
+  it("drops header variants with different casing, underscores, and spacing", async () => {
+    const csvPath = path.join(tmpDir, "variants.csv");
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    const content = `Title,SEVERITY,Repository,file_path,FILE PATH,filePath,Line,LINES,first_seen,FIRST_SEEN,Resource,policy_name,Policy Names,policy_names,SCM Link,Account ID
+T,H,R,p1,p2,p3,1,10,2023,2024,res,pol,pols,pols2,https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20,acc-123
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const result = await readFindingsCsv(csvPath);
+    expect(result.headers).toEqual(["SCM Link", "Account ID"]);
+    expect(result.findings).toHaveLength(1);
+
+    const finding = result.findings[0]!;
+    expect(finding.rawRow).toEqual({
+      "SCM Link": `https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20`,
+      "Account ID": "acc-123",
+    });
+  });
+
+  it("ingests minimal CSVs missing all dropped columns without error", async () => {
+    const csvPath = path.join(tmpDir, "minimal.csv");
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    const content = `SCM Link
+https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const result = await readFindingsCsv(csvPath);
+    expect(result.headers).toEqual(["SCM Link"]);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]!.initialStatus).toBe("pending");
+    expect(result.findings[0]!.canonicalSource).toBeDefined();
+  });
+
+  it("preserves custom metadata columns verbatim in headers and rawRow", async () => {
+    const csvPath = path.join(tmpDir, "custom.csv");
+    const sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    const content = `SCM Link,Account ID,Owner,Environment,Notes,Suppressed By
+https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20,123456,sec-team,prod,valid ignore,alice
+`;
+    fs.writeFileSync(csvPath, content);
+
+    const result = await readFindingsCsv(csvPath);
+    expect(result.headers).toEqual(["SCM Link", "Account ID", "Owner", "Environment", "Notes", "Suppressed By"]);
+    expect(result.findings[0]!.rawRow).toEqual({
+      "SCM Link": `https://github.com/my-org/my-repo/blob/${sha}/src/index.js#L10-L20`,
+      "Account ID": "123456",
+      "Owner": "sec-team",
+      "Environment": "prod",
+      "Notes": "valid ignore",
+      "Suppressed By": "alice",
+    });
   });
 });

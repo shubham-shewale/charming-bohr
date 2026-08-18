@@ -242,4 +242,113 @@ describe("ClaudeAnalyzer", () => {
       expect(results[i]!.error).toBe("max_llm_calls_exceeded");
     }
   });
+
+  it("formats prompt using Rule ID, Check ID, Policy ID, or fallback Finding index without relying on title", async () => {
+    let capturedPrompt = "";
+    const mockClient: AnthropicClientLike = {
+      messages: {
+        create: vi.fn().mockImplementation((params) => {
+          capturedPrompt = params.messages[0].content as string;
+          return Promise.resolve({
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  classifications: [
+                    { findingIndex: 0, classification: "likely_secret", confidence: 0.9, reason: "r0" },
+                    { findingIndex: 1, classification: "false_positive", confidence: 0.8, reason: "r1" },
+                    { findingIndex: 2, classification: "uncertain", confidence: 0.5, reason: "r2" },
+                    { findingIndex: 3, classification: "likely_secret", confidence: 0.95, reason: "r3" },
+                  ],
+                }),
+              },
+            ],
+          });
+        }),
+      },
+    };
+
+    const analyzer = new ClaudeAnalyzer({
+      config: defaultConfig,
+      anthropicClient: mockClient,
+    });
+
+    const workItem: FileWorkItem = {
+      contentIdentity: "github::my-org/my-repo::sha::sample.js",
+      provider: "github",
+      org: "my-org",
+      repo: "my-repo",
+      revision: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+      filePath: "sample.js",
+      findings: [
+        {
+          rowIndex: 0,
+          sourceFile: "input.csv",
+          rawRow: { "Rule ID": "AWS-SECRET-001" },
+          initialStatus: "pending",
+          canonicalSource: {
+            provider: "github",
+            org: "my-org",
+            repo: "my-repo",
+            revision: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            filePath: "sample.js",
+            lineStart: 1,
+            lineEnd: 2,
+          },
+        },
+        {
+          rowIndex: 1,
+          sourceFile: "input.csv",
+          rawRow: { "check_id": "CKV_SECRET_2" },
+          initialStatus: "pending",
+          canonicalSource: {
+            provider: "github",
+            org: "my-org",
+            repo: "my-repo",
+            revision: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            filePath: "sample.js",
+            lineStart: 3,
+            lineEnd: 4,
+          },
+        },
+        {
+          rowIndex: 2,
+          sourceFile: "input.csv",
+          rawRow: { "Policy ID": "POL-99" },
+          initialStatus: "pending",
+          canonicalSource: {
+            provider: "github",
+            org: "my-org",
+            repo: "my-repo",
+            revision: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            filePath: "sample.js",
+            lineStart: 5,
+            lineEnd: 6,
+          },
+        },
+        {
+          rowIndex: 3,
+          sourceFile: "input.csv",
+          rawRow: {}, // No rule, check, or policy id
+          initialStatus: "pending",
+          canonicalSource: {
+            provider: "github",
+            org: "my-org",
+            repo: "my-repo",
+            revision: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            filePath: "sample.js",
+            lineStart: 7,
+            lineEnd: 8,
+          },
+        },
+      ],
+    };
+
+    const results = await analyzer.analyzeWorkItem(workItem, sampleFilePath);
+    expect(results).toHaveLength(4);
+    expect(capturedPrompt).toContain("Finding index 0:\n- Title/Rule: AWS-SECRET-001");
+    expect(capturedPrompt).toContain("Finding index 1:\n- Title/Rule: CKV_SECRET_2");
+    expect(capturedPrompt).toContain("Finding index 2:\n- Title/Rule: POL-99");
+    expect(capturedPrompt).toContain("Finding index 3:\n- Title/Rule: Finding 3");
+  });
 });

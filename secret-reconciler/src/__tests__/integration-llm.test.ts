@@ -99,6 +99,7 @@ const TEST_TOKEN = "dummy_token_for_tests";
       output: outputCsv,
       fetchProvider,
       anthropicClient: mockAnthropicClient,
+      tempDir: path.join(tmpDir, "tmp"),
     });
 
     expect(summary.totalFindings).toBe(2);
@@ -172,6 +173,7 @@ rule-02,https://github.com/my-org/my-repo/blob/${sha}/src/app.js#L10
       output: outputCsv,
       fetchProvider,
       anthropicClient: mockAnthropicClient,
+      tempDir: path.join(tmpDir, "tmp"),
     });
 
     expect(summary.totalFindings).toBe(2);

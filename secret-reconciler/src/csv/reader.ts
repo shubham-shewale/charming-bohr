@@ -50,6 +50,30 @@ export function normalizeHeader(h: string): string {
 }
 
 /**
+ * Normalized column names to drop during CSV ingestion.
+ * @see CONTEXT.md & Issue 10
+ */
+export const DROPPED_COLUMNS_DENYLIST = new Set<string>([
+  "title",
+  "severity",
+  "repository",
+  "filepath",
+  "lines",
+  "line",
+  "firstseen",
+  "resource",
+  "policynames",
+  "policyname",
+]);
+
+/**
+ * Checks whether a column header matches any dropped scanner column.
+ */
+export function isDroppedColumn(header: string): boolean {
+  return DROPPED_COLUMNS_DENYLIST.has(normalizeHeader(header));
+}
+
+/**
  * Merges multiple header lists preserving first-seen order and normalized uniqueness.
  */
 export function mergeHeaders(
@@ -141,18 +165,24 @@ export async function readFindingsCsv(
 
   for await (const record of parser) {
     if (headers.length === 0) {
-      headers = Object.keys(record);
-      scmHeader = findScmLinkHeader(headers);
-      statusHeader = findStatusHeader(headers);
-      sourceFileHeader = findSourceFileHeader(headers);
+      const rawHeaders = Object.keys(record);
+      scmHeader = findScmLinkHeader(rawHeaders);
+      statusHeader = findStatusHeader(rawHeaders);
+      sourceFileHeader = findSourceFileHeader(rawHeaders);
+      headers = rawHeaders.filter((h) => !isDroppedColumn(h));
     }
 
-    const rawRow: Record<string, string> = record;
+    const rawRow: Record<string, string> = {};
+    for (const [key, val] of Object.entries(record)) {
+      if (!isDroppedColumn(key)) {
+        rawRow[key] = val as string;
+      }
+    }
     let initialStatus: FindingStatus = "pending";
 
     // ── Check resume status if status column exists (ADR 0002) ──────────
-    if (statusHeader && rawRow[statusHeader]) {
-      const existingStatus = rawRow[statusHeader].trim().toLowerCase();
+    if (statusHeader && record[statusHeader]) {
+      const existingStatus = (record[statusHeader] as string).trim().toLowerCase();
       if (existingStatus === "completed") {
         initialStatus = "completed";
       } else if (existingStatus === "failed") {
@@ -165,11 +195,11 @@ export async function readFindingsCsv(
 
     // Determine source_file: preserve existing if present and non-empty, otherwise use filename
     let sourceFile = path.basename(filePath);
-    if (sourceFileHeader && rawRow[sourceFileHeader] && rawRow[sourceFileHeader].trim()) {
-      sourceFile = rawRow[sourceFileHeader].trim();
+    if (sourceFileHeader && record[sourceFileHeader] && (record[sourceFileHeader] as string).trim()) {
+      sourceFile = (record[sourceFileHeader] as string).trim();
     }
 
-    const rawUrl = scmHeader ? rawRow[scmHeader] : undefined;
+    const rawUrl = scmHeader ? (record[scmHeader] as string) : undefined;
 
     let canonicalSource: CanonicalSource | undefined;
     let parseError: ParseError | undefined;

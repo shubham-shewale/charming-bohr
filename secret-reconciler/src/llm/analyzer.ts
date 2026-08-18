@@ -150,13 +150,18 @@ export class ClaudeAnalyzer {
     fileContent: string
   ): Promise<FindingResult[]> {
     const getTitle = (rawRow: Record<string, string>, fallback: string): string => {
+      const normalizedMap = new Map<string, string>();
       for (const [key, val] of Object.entries(rawRow)) {
-        const norm = key.trim().toLowerCase().replace(/[\s_]+/g, "");
-        if (norm === "ruleid" || norm === "checkid" || norm === "title" || norm === "findingtitle" || norm === "policyid") {
-          if (val && val.trim()) return val.trim();
+        if (val && val.trim()) {
+          normalizedMap.set(key.trim().toLowerCase().replace(/[\s_]+/g, ""), val.trim());
         }
       }
-      return fallback;
+      return (
+        normalizedMap.get("ruleid") ??
+        normalizedMap.get("checkid") ??
+        normalizedMap.get("policyid") ??
+        fallback
+      );
     };
 
     // Build line ranges and prompt list in a single pass
