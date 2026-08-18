@@ -148,5 +148,14 @@ chatgpt_arch_review.txt.rtf
 # Temp files
 tmp/
 
+# OS metadata
 .DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Agent skills & scratch metadata
+.agents/
+.scratch/
+skills-lock.json
+
 
