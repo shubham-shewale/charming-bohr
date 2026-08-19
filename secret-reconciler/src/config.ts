@@ -79,7 +79,7 @@ function optionalRangedIntString(min: number, defaultValue: number) {
 /**
  * Optional string transformer that trims whitespace, splits by comma, and returns undefined if empty.
  */
-const optionalCheckIds = z
+const optionalCommaSeparatedList = z
   .string()
   .optional()
   .transform((val) => {
@@ -162,6 +162,7 @@ const configSchema = z.object({
   LLM_DETECTOR_ADVISOR_ENABLED: optionalBooleanString(false),
   LLM_MAX_CONTEXT_EXPANSIONS: optionalRangedIntString(0, 2),
   LLM_MAX_CONTEXT_LINES: optionalRangedIntString(1, 150),
+  LLM_IGNORE_PATTERNS: optionalCommaSeparatedList,
   LLM_PROMPT_PROFILE: z
     .enum(["context-classifier-v1", "context-classifier-v2"] as const)
     .optional()
@@ -203,7 +204,7 @@ const configSchema = z.object({
   TRUFFLEHOG_TIMEOUT_SECONDS: optionalRangedIntString(1, 60),
   TRUFFLEHOG_USER_AGENT_SUFFIX: optionalTrimmedString,
   TRUFFLEHOG_CONFIG_PATH: optionalTrimmedString,
-  CHECK_IDS: optionalCheckIds,
+  CHECK_IDS: optionalCommaSeparatedList,
   LIMIT: optionalPositiveInt,
 }).superRefine((env, ctx) => {
   if (env.FLOW === "trufflehog-only") return;
@@ -281,6 +282,8 @@ export interface AppConfig {
   llmDetectorAdvisorEnabled?: boolean;
   llmMaxContextExpansions?: number;
   llmMaxContextLines?: number;
+  /** Repository-relative path patterns excluded only from LLM analysis. */
+  llmIgnorePatterns?: string[];
   llmPromptProfile?: "context-classifier-v1" | "context-classifier-v2";
   llmDetectorPromptProfile?: "detector-advisor-v1";
   /** @deprecated Test-only compatibility field; production uses aiGatewayAuthToken. */
@@ -354,6 +357,7 @@ export function loadConfig(): AppConfig {
     llmDetectorAdvisorEnabled: env.LLM_DETECTOR_ADVISOR_ENABLED,
     llmMaxContextExpansions: env.LLM_MAX_CONTEXT_EXPANSIONS,
     llmMaxContextLines: env.LLM_MAX_CONTEXT_LINES,
+    llmIgnorePatterns: env.LLM_IGNORE_PATTERNS,
     llmPromptProfile: env.LLM_PROMPT_PROFILE,
     llmDetectorPromptProfile: env.LLM_DETECTOR_PROMPT_PROFILE,
     maxTokensPerRequest: env.MAX_TOKENS_PER_REQUEST,

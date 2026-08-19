@@ -28,6 +28,10 @@ import {
 import { ContextualSecretAnalyzer, type AnthropicClientLike } from "./llm/analyzer.js";
 import type { AiGatewayClientLike } from "./ai-gateway/types.js";
 import { CostTracker } from "./llm/cost-tracker.js";
+import {
+  evaluateLlmFileEligibility,
+  type LlmFileEligibility,
+} from "./llm/eligibility.js";
 import { executeHybridFlow } from "./hybrid/state-machine.js";
 
 export interface PipelineProgress {
@@ -144,6 +148,17 @@ async function scanWithTruffleHog(
   return matchDetectionsToFindings(findings, detections);
 }
 
+function produceLlmPolicySkippedResults(
+  workItem: FileWorkItem,
+  reason: string
+): FindingResult[] {
+  return workItem.findings.map((finding) => ({
+    findingRef: finding,
+    status: "skipped",
+    error: `LLM analysis skipped by policy: ${reason}`,
+  }));
+}
+
 /**
  * Runs one pass of the p-limit executor over the given work items.
  * Returns items that were deferred due to GitHub rate limiting.
@@ -188,42 +203,59 @@ async function runPass(
 
       try {
         const sampleSource = workItem.findings[0]!.canonicalSource!;
-        const localFilePath = await fetcher.fetchFile(sampleSource);
-
-        // Check file size against MAX_FILE_SIZE_KB
-        const stats = fs.statSync(localFilePath);
-        const maxBytes = config.maxFileSizeKb * 1024;
         let results: FindingResult[];
+        const pathEligibility = evaluateLlmFileEligibility(
+          sampleSource.filePath,
+          undefined,
+          config.maxFileSizeKb,
+          config.llmIgnorePatterns
+        );
 
-        if (stats.size > maxBytes) {
-          const sizeKb = (stats.size / 1024).toFixed(1);
-          const errMsg = `File size (${sizeKb} KB) exceeds MAX_FILE_SIZE_KB limit of ${config.maxFileSizeKb} KB`;
-          results = workItem.findings.map((finding) => ({
-            findingRef: finding,
-            status: "skipped" as const,
-            error: errMsg,
-          }));
-        } else if (config.flow === "llm-only") {
-          if (!contextualAnalyzer) {
-            throw new Error("LLM analyzer is not configured for llm-only flow");
-          }
-          results = await contextualAnalyzer.analyzeWorkItem(workItem, localFilePath, {
-            signal: trufflehogOptions.signal,
-          });
-        } else if (config.flow === "trufflehog-only") {
-          results = await scanWithTruffleHog(
-            localFilePath,
-            workItem.findings,
-            trufflehogOptions
-          );
-        } else if (config.flow === "hybrid") {
-          results = await executeHybridFlow(workItem, localFilePath, {
-            contextualAnalyzer,
-            trufflehogOptions,
-            signal: trufflehogOptions.signal,
-          });
+        // In llm-only mode an ignored path never needs to be fetched. Hybrid
+        // still fetches and scans it with TruffleHog before skipping only LLM.
+        if (config.flow === "llm-only" && !pathEligibility.eligible) {
+          results = produceLlmPolicySkippedResults(workItem, pathEligibility.reason!);
         } else {
-          throw new Error(`Flow "${config.flow}" is not supported yet.`);
+          const localFilePath = await fetcher.fetchFile(sampleSource);
+          const llmEligibility: LlmFileEligibility = config.flow === "trufflehog-only"
+            ? { eligible: true }
+            : evaluateLlmFileEligibility(
+                sampleSource.filePath,
+                fs.statSync(localFilePath).size,
+                config.maxFileSizeKb,
+                config.llmIgnorePatterns
+              );
+
+          if (config.flow === "llm-only") {
+            if (!llmEligibility.eligible) {
+              results = produceLlmPolicySkippedResults(workItem, llmEligibility.reason!);
+            } else {
+              if (!contextualAnalyzer) {
+                throw new Error("LLM analyzer is not configured for llm-only flow");
+              }
+              results = await contextualAnalyzer.analyzeWorkItem(workItem, localFilePath, {
+                signal: trufflehogOptions.signal,
+              });
+            }
+          } else if (config.flow === "trufflehog-only") {
+            results = await scanWithTruffleHog(
+              localFilePath,
+              workItem.findings,
+              trufflehogOptions
+            );
+          } else if (config.flow === "hybrid") {
+            const llmSkipReason = contextualAnalyzer && !llmEligibility.eligible
+              ? `LLM analysis skipped by policy: ${llmEligibility.reason}`
+              : undefined;
+            results = await executeHybridFlow(workItem, localFilePath, {
+              contextualAnalyzer: llmEligibility.eligible ? contextualAnalyzer : undefined,
+              trufflehogOptions,
+              signal: trufflehogOptions.signal,
+              llmSkipReason,
+            });
+          } else {
+            throw new Error(`Flow "${config.flow}" is not supported yet.`);
+          }
         }
 
         if (!acceptResults()) return;

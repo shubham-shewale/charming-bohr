@@ -44,6 +44,7 @@ beforeEach(() => {
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
   delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
+  delete process.env["LLM_IGNORE_PATTERNS"];
   delete process.env["CHECK_IDS"];
   delete process.env["LIMIT"];
 });
@@ -57,6 +58,7 @@ afterEach(() => {
   delete process.env["TRUFFLEHOG_TIMEOUT_SECONDS"];
   delete process.env["TRUFFLEHOG_USER_AGENT_SUFFIX"];
   delete process.env["GITHUB_RATE_LIMIT_MAX_RETRIES"];
+  delete process.env["LLM_IGNORE_PATTERNS"];
   delete process.env["CHECK_IDS"];
   delete process.env["LIMIT"];
   for (const [k, v] of Object.entries(originalEnv)) {
@@ -115,6 +117,23 @@ describe("loadConfig — valid configuration", () => {
   it("defaults the initial context window to ten surrounding lines", () => {
     withEnv({ SURROUNDING_LINES: undefined });
     expect(loadConfig().surroundingLines).toBe(10);
+  });
+
+  it("parses comma-separated LLM ignore patterns from the environment", () => {
+    withEnv({
+      LLM_IGNORE_PATTERNS: " *.min.js, *.min.css, node_modules/, *.log ",
+    });
+    expect(loadConfig().llmIgnorePatterns).toEqual([
+      "*.min.js",
+      "*.min.css",
+      "node_modules/",
+      "*.log",
+    ]);
+  });
+
+  it("leaves LLM ignore patterns undefined when the environment value is empty", () => {
+    withEnv({ LLM_IGNORE_PATTERNS: "   " });
+    expect(loadConfig().llmIgnorePatterns).toBeUndefined();
   });
 
   it("accepts the v1 classifier prompt for backwards compatibility", () => {

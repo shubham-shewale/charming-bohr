@@ -81,6 +81,8 @@ export interface HybridFlowOptions {
   /** Backwards-compatible executor injection used by existing callers/tests. */
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
   signal?: AbortSignal;
+  /** Explains why contextual analysis was intentionally not run for this file. */
+  llmSkipReason?: string;
 }
 
 function mergeLlmWithVerification(
@@ -172,9 +174,12 @@ export async function executeHybridFlow(
         resultMap.set(finding, {
           ...verificationResult,
           status: "completed",
-          llmClassification: "uncertain",
-          llmConfidence: 0,
-          llmReason: "Context classifier is disabled; manual review required",
+          ...(options.llmSkipReason
+            ? {}
+            : { llmClassification: "uncertain" as const, llmConfidence: 0 }),
+          llmReason:
+            options.llmSkipReason ??
+            "Context classifier is disabled; manual review required",
           error: "",
         });
       }

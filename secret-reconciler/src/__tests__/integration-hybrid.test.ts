@@ -143,6 +143,54 @@ describe("End-to-End verification-first Hybrid Pipeline", () => {
     });
   });
 
+  it("keeps TruffleHog results while size and path policies skip only LLM", async () => {
+    const { input, output } = paths("llm-policy");
+    fs.writeFileSync(
+      input,
+      `Rule ID,SCM Link
+rule-log,https://github.com/org/repo/blob/${sha}/logs/application.log#L5
+rule-large,https://github.com/org/repo/blob/${sha}/src/large.js#L10
+`
+    );
+    const create = vi.fn();
+    const trufflehogExecFn = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+    const summary = await runPipeline([input], {
+      config: {
+        ...config,
+        maxFileSizeKb: 1,
+        llmIgnorePatterns: ["*.log"],
+      },
+      output,
+      tempDir: path.join(tmpDir, "files"),
+      fetchProvider: async (source) => source.filePath.endsWith("large.js")
+        ? "x".repeat(2 * 1024)
+        : "small log content\n",
+      anthropicClient: { messages: { create } },
+      trufflehogExecFn,
+    });
+
+    expect(trufflehogExecFn).toHaveBeenCalledTimes(2);
+    expect(create).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ completed: 2, skipped: 0, notDetected: 2 });
+
+    const records = readOutput(output);
+    expect(records[0]).toMatchObject({
+      status: "completed",
+      trufflehog_result: "not_detected",
+      llm_classification: "",
+      llm_reason: expect.stringContaining('LLM_IGNORE_PATTERNS pattern "*.log"'),
+      error: "",
+    });
+    expect(records[1]).toMatchObject({
+      status: "completed",
+      trufflehog_result: "not_detected",
+      llm_classification: "",
+      llm_reason: expect.stringContaining("exceeds MAX_FILE_SIZE_KB limit of 1 KB"),
+      error: "",
+    });
+  });
+
   it("keeps verification network failures unknown and bypasses the LLM", async () => {
     const { input, output } = paths("unknown");
     fs.writeFileSync(

@@ -48,14 +48,14 @@ flowchart TD
     B --> C[Group by Content Identity]
     
     subgraph WorkItemProcessing [File Work Item Processing]
-        C --> D{Check Size Limit}
-        D -- Exceeds MAX_FILE_SIZE_KB --> E[Mark Skipped]
-        D -- Within Limit --> F[Fetch File Content from SCM]
-        F --> G{Flow Strategy}
-        
-        G -- trufflehog-only --> H[Run TruffleHog Scanner]
-        G -- llm-only --> I[Run AI Gateway Context Analysis]
-        G -- hybrid --> J[Run Hybrid State Machine]
+        C --> G{Flow Strategy}
+        G -- trufflehog-only --> F1[Fetch File] --> H[Run TruffleHog Scanner]
+        G -- llm-only --> P{Path Eligible?}
+        P -- No --> E[Mark LLM-only Finding Skipped]
+        P -- Yes --> F2[Fetch File] --> D{Size Eligible?}
+        D -- No --> E
+        D -- Yes --> I[Run AI Gateway Context Analysis]
+        G -- hybrid --> F3[Fetch File] --> J[Run TruffleHog, Then Gate LLM Fallback]
     end
     
     H --> K[Merge & Build Results]
@@ -169,6 +169,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `LLM_DETECTOR_ADVISOR_ENABLED` | Boolean | `false` | *Optional* | Enables review-only detector advice for `not_detected + probable_secret`. |
 | `LLM_MAX_CONTEXT_EXPANSIONS` | Integer | `2` | *Optional* | Maximum bounded context tool calls per batch. |
 | `LLM_MAX_CONTEXT_LINES` | Integer | `150` | *Optional* | Maximum lines returned by each context tool call. |
+| `LLM_IGNORE_PATTERNS` | CSV String | `*.min.js,node_modules/,*.log` | *Optional* | Repository-relative basename, directory, or path globs excluded only from LLM analysis. |
 | `LLM_PROMPT_PROFILE` | Enum | `context-classifier-v2` | *Optional* | Versioned classifier prompt. V2 adds bounded current-file search; V1 remains accepted for compatibility. |
 | `MAX_TOKENS_PER_REQUEST` | Integer | `4096` | Conditional | Maximum completion tokens per gateway request (>= 1). |
 | `MAX_LLM_CALLS_PER_FILE` | Integer | `3` | **Yes** (LLM/Hybrid) | Maximum LLM batch calls per file work item (>= 1). |
@@ -181,7 +182,7 @@ Configuration is loaded from `.env` (or ambient environment variables) and stric
 | `CHECK_IDS` | String | `CKV_SECRET_6,CKV_AWS_1` | *Optional* | Comma-separated list of Check IDs to reconcile (default: all). |
 | `LIMIT` | Integer | `100` | *Optional* | Maximum number of pending findings to process in this run (>= 1, default: unlimited). |
 | `CONCURRENCY` | Integer | `5` | **Yes** | Number of file work items processed concurrently (>= 1). |
-| `MAX_FILE_SIZE_KB` | Integer | `500` | **Yes** | Maximum file size in KB to download and analyze (>= 1). |
+| `MAX_FILE_SIZE_KB` | Integer | `500` | **Yes** | Maximum file size eligible for LLM analysis (>= 1); TruffleHog scanning is unaffected. |
 | `SURROUNDING_LINES` | Integer | `10` | *Optional* | Initial lines of redacted context included above and below each finding. |
 | `CLEANUP_TEMP_FILES` | Boolean | `true` | **Yes** | Coerces `"true"` or `"false"`. Deletes downloaded source files on completion. |
 
@@ -358,7 +359,7 @@ The output CSV preserves **all original input columns** verbatim and appends 20 
 - **`status`**:
   - `completed`: Successfully analyzed by the configured flow.
   - `failed`: Network fetch failed, scanner error, or another unrecoverable processing error. Gateway failures become completed `uncertain` review outcomes.
-  - `skipped`: Unparseable SCM URL or file size exceeded `MAX_FILE_SIZE_KB`.
+  - `skipped`: Unparseable SCM URL, or an `llm-only` file was excluded by size/path policy.
   - `pending`: Unfinished row from an interrupted run.
 - **`trufflehog_result`**:
   - `verified`: Secret was confirmed active/live by TruffleHog detector.
@@ -384,7 +385,9 @@ When you press `Ctrl+C`:
 Output files are written using a unique temporary sibling file (`<output>.tmp.<pid>.<uuid>`) and atomically renamed to prevent file corruption during sudden terminations.
 
 ### 3. File Size Caps (`MAX_FILE_SIZE_KB`)
-Files exceeding `MAX_FILE_SIZE_KB` (default 500 KB) are automatically marked with `status=skipped` and `error="File size (X KB) exceeds maximum allowed size (Y KB)"` to prevent memory exhaustion and excessive LLM token costs.
+Files exceeding `MAX_FILE_SIZE_KB` (default 500 KB) are not sent to the LLM. In `llm-only` mode they are marked `status=skipped`; in `hybrid` mode TruffleHog still scans them and its result is preserved with an LLM policy-skip reason.
+
+`LLM_IGNORE_PATTERNS` applies the same LLM-only exclusion to repository-relative paths. Basename globs such as `*.log` and `*.min.js` match at any depth, directory patterns such as `node_modules/` match complete path segments, and path globs such as `generated/**` are also supported. These patterns never disable TruffleHog scanning.
 
 ### 4. Large Finding Batching
 Files with more than 15 findings are automatically partitioned into batches of 15. The CLI enforces `MAX_LLM_CALLS_PER_FILE` to safeguard against runaway API calls on heavily flagged files.
