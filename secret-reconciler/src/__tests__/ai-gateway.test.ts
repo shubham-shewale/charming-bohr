@@ -134,4 +134,34 @@ describe("OpenAiCompatibleGatewayClient", () => {
       maxTokens: 100,
     })).rejects.toThrow(/undeclared tool web_search/);
   });
+
+  it("aborts an in-flight gateway request when the caller cancels it", async () => {
+    const fetchFn = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    });
+    const client = new OpenAiCompatibleGatewayClient({
+      baseUrl: "https://gateway.internal",
+      timeoutMs: 10_000,
+      fetchFn,
+    });
+    const controller = new AbortController();
+    const request = client.complete({
+      model: "model",
+      messages: [],
+      tools: [],
+      toolChoice: "required",
+      maxTokens: 100,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(request).rejects.toThrow("AI Gateway request aborted");
+  });
 });

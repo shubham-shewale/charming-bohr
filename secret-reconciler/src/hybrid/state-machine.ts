@@ -80,6 +80,7 @@ export interface HybridFlowOptions {
   trufflehogOptions?: RunTruffleHogOptions;
   /** Backwards-compatible executor injection used by existing callers/tests. */
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
+  signal?: AbortSignal;
 }
 
 function mergeLlmWithVerification(
@@ -129,10 +130,12 @@ export async function executeHybridFlow(
     const trufflehogOptions: RunTruffleHogOptions = {
       ...options.trufflehogOptions,
       execFn: options.trufflehogOptions?.execFn ?? options.trufflehogExecFn,
+      signal: options.signal ?? options.trufflehogOptions?.signal,
     };
     const detections = await runTruffleHog(localFilePath, trufflehogOptions);
     verificationResults = matchDetectionsToFindings(pendingFindings, detections);
   } catch (error: unknown) {
+    if (options.signal?.aborted) throw error;
     const message = error instanceof Error ? error.message : String(error);
     for (const finding of pendingFindings) {
       resultMap.set(finding, {
@@ -190,7 +193,7 @@ export async function executeHybridFlow(
       const llmResults = await contextualAnalyzer.analyzeWorkItem(
         llmWorkItem,
         localFilePath,
-        { verificationResults: verificationResultMap }
+        { verificationResults: verificationResultMap, signal: options.signal }
       );
       const llmResultMap = new Map(
         llmResults.map((result) => [result.findingRef, result])
@@ -212,6 +215,7 @@ export async function executeHybridFlow(
         );
       }
     } catch (error: unknown) {
+      if (options.signal?.aborted) throw error;
       const message = error instanceof Error ? error.message : String(error);
       for (const { finding, verificationResult } of needsLlm) {
         resultMap.set(finding, {

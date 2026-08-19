@@ -173,6 +173,7 @@ interface AnalyzerConfig {
 
 export interface AnalyzeWorkItemOptions {
   verificationResults?: Map<FindingRef, FindingResult>;
+  signal?: AbortSignal;
 }
 
 export class ContextualSecretAnalyzer {
@@ -279,11 +280,13 @@ export class ContextualSecretAnalyzer {
           batch,
           fileContent,
           options.verificationResults,
-          this.config.maxLlmCallsPerFile - callsUsed
+          this.config.maxLlmCallsPerFile - callsUsed,
+          options.signal
         );
         callsUsed += analyzed.callsUsed;
         results.push(...analyzed.results);
       } catch (error: unknown) {
+        if (options.signal?.aborted) throw error;
         const message = error instanceof Error ? error.message : String(error);
         callsUsed++;
         results.push(...this.invalidBatch(batch, `AI Gateway request failed: ${message}`, "ai_gateway_error"));
@@ -330,7 +333,8 @@ export class ContextualSecretAnalyzer {
     batch: FindingRef[],
     fileContent: string,
     verificationResults: Map<FindingRef, FindingResult> | undefined,
-    callBudget: number
+    callBudget: number,
+    signal?: AbortSignal
   ): Promise<{ results: FindingResult[]; callsUsed: number }> {
     const envelopes = batch.map((finding, findingIndex) =>
       assembleContextEnvelope(
@@ -390,6 +394,7 @@ export class ContextualSecretAnalyzer {
         maxTokens: this.config.maxTokensPerRequest,
         promptCacheKey: this.promptCacheKey(this.classifierPromptVersion),
         promptCacheRetention: this.config.promptCacheRetention,
+        signal,
       });
       callsUsed++;
       this.recordUsage(response);
@@ -483,10 +488,12 @@ export class ContextualSecretAnalyzer {
       try {
         const advised = await this.runDetectorAdvisor(
           detectorCandidates.map(([index]) => envelopes[index]!),
-          detectorCandidates.map(([index, assessment]) => ({ index, assessment }))
+          detectorCandidates.map(([index, assessment]) => ({ index, assessment })),
+          signal
         );
         detectorAssessments = advised;
-      } catch {
+      } catch (error: unknown) {
+        if (signal?.aborted) throw error;
         // Detector advice is optional and review-only. A failed advisory call
         // must not erase an otherwise valid contextual assessment.
       } finally {
@@ -525,7 +532,8 @@ export class ContextualSecretAnalyzer {
 
   private async runDetectorAdvisor(
     envelopes: ContextEnvelope[],
-    candidates: Array<{ index: number; assessment: SecretContextAssessment }>
+    candidates: Array<{ index: number; assessment: SecretContextAssessment }>,
+    signal?: AbortSignal
   ): Promise<Map<number, DetectorGapAssessment>> {
     const response = await this.client.complete({
       model: this.config.model,
@@ -548,6 +556,7 @@ export class ContextualSecretAnalyzer {
       maxTokens: this.config.maxTokensPerRequest,
       promptCacheKey: this.promptCacheKey(DETECTOR_ADVISOR_PROMPT_VERSION),
       promptCacheRetention: this.config.promptCacheRetention,
+      signal,
     });
     this.recordUsage(response);
     const call = response.toolCalls.find((toolCall) => toolCall.name === "submit_detector_gap_assessments");

@@ -13,6 +13,16 @@ interface TokenSlot {
   resetAt: number;
 }
 
+export class TokenPoolExhaustedError extends Error {
+  readonly resetAt: number;
+
+  constructor(resetAt: number) {
+    super("All GitHub tokens are currently rate-limited.");
+    this.name = "TokenPoolExhaustedError";
+    this.resetAt = resetAt;
+  }
+}
+
 export class TokenPool {
   private slots: TokenSlot[];
   private currentIndex = 0;
@@ -25,12 +35,27 @@ export class TokenPool {
   }
 
   /**
-   * Returns the next token string via round-robin.
+   * Returns the next usable token via round-robin and reserves one locally
+   * known request. Exhausted tokens are skipped until their reset window.
    */
   getToken(): string {
-    const slot = this.slots[this.currentIndex % this.slots.length]!;
-    this.currentIndex = (this.currentIndex + 1) % this.slots.length;
-    return slot.token;
+    this.resetBlockedState();
+    const nowSeconds = Date.now() / 1000;
+
+    for (let offset = 0; offset < this.slots.length; offset++) {
+      const index = (this.currentIndex + offset) % this.slots.length;
+      const slot = this.slots[index]!;
+      const blocked = slot.remaining === 0 && nowSeconds < slot.resetAt;
+      if (blocked) continue;
+
+      this.currentIndex = (index + 1) % this.slots.length;
+      if (Number.isFinite(slot.remaining) && slot.remaining > 0) {
+        slot.remaining--;
+      }
+      return slot.token;
+    }
+
+    throw new TokenPoolExhaustedError(this.getEarliestReset());
   }
 
   /**
@@ -40,6 +65,16 @@ export class TokenPool {
   reportUsage(token: string, remaining: number, resetAt: number): void {
     const slot = this.slots.find((s) => s.token === token);
     if (!slot) return;
+
+    this.resetBlockedState();
+    if (slot.resetAt > 0 && resetAt > 0 && resetAt < slot.resetAt) {
+      return;
+    }
+    if (slot.resetAt === resetAt) {
+      slot.remaining = Math.min(slot.remaining, remaining);
+      return;
+    }
+
     slot.remaining = remaining;
     slot.resetAt = resetAt;
   }

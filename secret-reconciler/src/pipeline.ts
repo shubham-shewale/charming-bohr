@@ -11,7 +11,7 @@ import {
 import { writeResultsCsv } from "./csv/writer.js";
 import { FileFetcher } from "./fetcher/file-fetcher.js";
 import { GitHubRateLimitError } from "./providers/github-provider.js";
-import { TokenPool } from "./providers/token-pool.js";
+import { TokenPool, TokenPoolExhaustedError } from "./providers/token-pool.js";
 import { matchDetectionsToFindings, produceErrorResultsForWorkItem } from "./trufflehog/matcher.js";
 import {
   assertSupportedTruffleHogVersion,
@@ -53,14 +53,14 @@ export interface PipelineOptions {
   output?: string;
   retryFailed?: boolean;
   keepFiles?: boolean;
-  fetchProvider?: (source: CanonicalSource) => Promise<string>;
+  fetchProvider?: (source: CanonicalSource, signal?: AbortSignal) => Promise<string>;
   trufflehogExecFn?: RunTruffleHogOptions["execFn"];
   anthropicClient?: AnthropicClientLike;
   aiGatewayClient?: AiGatewayClientLike;
   onProgress?: (progress: PipelineProgress) => void;
   signal?: AbortSignal;
   sigintTimeoutMs?: number;
-  /** Directory to store fetched files in. Defaults to `tmp/` in current working directory. */
+  /** Directory to store fetched files in. Defaults to an isolated run directory under `tmp/`. */
   tempDir?: string;
   /** Override sleep function for testing. Defaults to setTimeout-based sleep. */
   sleepFn?: (ms: number) => Promise<void>;
@@ -114,6 +114,27 @@ export function generateDefaultOutputFilename(
   return path.join(cwd, `results-${yyyy}${mm}${dd}T${hh}${min}.csv`);
 }
 
+/** Atomically reserves a default output path, suffixing only on a collision. */
+export function reserveDefaultOutputFilename(
+  cwd: string = process.cwd(),
+  now: Date = new Date()
+): string {
+  const basePath = generateDefaultOutputFilename(cwd, now);
+  const extension = path.extname(basePath);
+  const stem = basePath.slice(0, -extension.length);
+
+  for (let attempt = 0; ; attempt++) {
+    const candidate = attempt === 0 ? basePath : `${stem}-${attempt}${extension}`;
+    try {
+      const descriptor = fs.openSync(candidate, "wx");
+      fs.closeSync(descriptor);
+      return candidate;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
+
 async function scanWithTruffleHog(
   localFilePath: string,
   findings: FindingRef[],
@@ -132,6 +153,7 @@ async function runPass(
   {
     limit,
     isAborted,
+    acceptResults,
     tokenPool,
     fetcher,
     config,
@@ -142,6 +164,7 @@ async function runPass(
   }: {
     limit: ReturnType<typeof pLimit>;
     isAborted: () => boolean;
+    acceptResults: () => boolean;
     tokenPool: TokenPool;
     fetcher: FileFetcher;
     config: AppConfig;
@@ -184,7 +207,9 @@ async function runPass(
           if (!contextualAnalyzer) {
             throw new Error("LLM analyzer is not configured for llm-only flow");
           }
-          results = await contextualAnalyzer.analyzeWorkItem(workItem, localFilePath);
+          results = await contextualAnalyzer.analyzeWorkItem(workItem, localFilePath, {
+            signal: trufflehogOptions.signal,
+          });
         } else if (config.flow === "trufflehog-only") {
           results = await scanWithTruffleHog(
             localFilePath,
@@ -195,24 +220,26 @@ async function runPass(
           results = await executeHybridFlow(workItem, localFilePath, {
             contextualAnalyzer,
             trufflehogOptions,
+            signal: trufflehogOptions.signal,
           });
         } else {
           throw new Error(`Flow "${config.flow}" is not supported yet.`);
         }
 
+        if (!acceptResults()) return;
         onFileDone(results);
         for (const res of results) {
           processedResultsMap.set(res.findingRef, res);
         }
       } catch (err: unknown) {
-        if (err instanceof GitHubRateLimitError) {
+        if (err instanceof GitHubRateLimitError || err instanceof TokenPoolExhaustedError) {
           // Rate-limit hit mid-fetch: defer this item for the next pass
           // (Token usage and reset time have already been recorded by FileFetcher)
-          deferred.push(workItem);
+          if (acceptResults()) deferred.push(workItem);
           return;
         }
 
-        if (!isAborted()) {
+        if (!isAborted() && acceptResults()) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
           onFileDone(errResults);
@@ -236,6 +263,20 @@ export async function runPipeline(
   options: PipelineOptions
 ): Promise<PipelineSummary> {
   const { config } = options;
+  const hardAbortController = new AbortController();
+  const timeoutMs = options.sigintTimeoutMs ?? 2000;
+  let isAborted = options.signal?.aborted ?? false;
+  const abortPromise = options.signal
+    ? new Promise<void>((resolve) => {
+        if (options.signal!.aborted) resolve();
+        else options.signal!.addEventListener("abort", () => resolve(), { once: true });
+      })
+    : undefined;
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => {
+      isAborted = true;
+    }, { once: true });
+  }
 
   // Assemble TruffleHog runner options
   const trufflehogOptions: RunTruffleHogOptions = {
@@ -244,6 +285,7 @@ export async function runPipeline(
     userAgentSuffix: config.trufflehogUserAgentSuffix,
     configPath: config.trufflehogConfigPath,
     timeoutMs: config.trufflehogTimeoutSeconds * 1000,
+    signal: hardAbortController.signal,
   };
 
   // Validate the real CLI once at startup. Test executors are explicit contract
@@ -251,14 +293,12 @@ export async function runPipeline(
   if (config.flow !== "llm-only" && !options.trufflehogExecFn) {
     await assertSupportedTruffleHogVersion({
       timeoutMs: config.trufflehogTimeoutSeconds * 1000,
+      signal: options.signal,
     });
   }
 
-  // Determine output path
+  // An implicit output path is reserved immediately before the atomic write.
   let outputPath = options.output;
-  if (!outputPath) {
-    outputPath = generateDefaultOutputFilename();
-  }
 
   // Initialize TokenPool and FileFetcher
   const tokenPool = new TokenPool(config.githubPats);
@@ -267,6 +307,7 @@ export async function runPipeline(
     azureDevOpsPat: config.azureDevOpsPat,
     tempDir: options.tempDir,
     fetchProvider: options.fetchProvider,
+    signal: hardAbortController.signal,
   });
 
   const costTracker = new CostTracker({
@@ -284,7 +325,20 @@ export async function runPipeline(
       });
 
   // Sleep function (overridable for testing)
-  const sleepFn = options.sleepFn ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const sleepFn = options.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      options.signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    if (options.signal?.aborted) {
+      finish();
+      return;
+    }
+    timer = setTimeout(finish, ms);
+    options.signal?.addEventListener("abort", finish, { once: true });
+  }));
 
   // Read all source CSV files
   const allFindings: FindingRef[] = [];
@@ -333,13 +387,8 @@ export async function runPipeline(
 
   // Setup bounded concurrency and cancellation tracking
   const limit = pLimit(config.concurrency);
-  const timeoutMs = options.sigintTimeoutMs ?? 2000;
-  let isAborted = options.signal?.aborted ?? false;
-  if (options.signal) {
-    options.signal.addEventListener("abort", () => {
-      isAborted = true;
-    });
-  }
+  let acceptResults = true;
+  let unfinishedPass: Promise<FileWorkItem[]> | undefined;
 
   const processedResultsMap = new Map<FindingRef, FindingResult>();
   let filesProcessed = 0;
@@ -352,23 +401,27 @@ export async function runPipeline(
   const reportProgress = () => {
     if (options.onProgress) {
       const usage = costTracker.getUsage();
-      options.onProgress({
-        filesProcessed,
-        totalFiles,
-        findingsProcessed: findingsCompleted + findingsSkipped + findingsFailed,
-        findingsCompleted,
-        findingsSkipped,
-        findingsFailed,
-        totalFindings,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedInputTokens: usage.cachedInputTokens,
-        llmCalls: usage.llmCalls,
-        usageReportedCalls: usage.usageReportedCalls,
-        cacheReportedCalls: usage.cacheReportedCalls,
-        tokensUsed: usage.inputTokens + usage.outputTokens,
-        estimatedCostUsd: usage.estimatedCostUsd,
-      });
+      try {
+        options.onProgress({
+          filesProcessed,
+          totalFiles,
+          findingsProcessed: findingsCompleted + findingsSkipped + findingsFailed,
+          findingsCompleted,
+          findingsSkipped,
+          findingsFailed,
+          totalFindings,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          llmCalls: usage.llmCalls,
+          usageReportedCalls: usage.usageReportedCalls,
+          cacheReportedCalls: usage.cacheReportedCalls,
+          tokensUsed: usage.inputTokens + usage.outputTokens,
+          estimatedCostUsd: usage.estimatedCostUsd,
+        });
+      } catch {
+        // Progress is observational and must never change reconciliation results.
+      }
     }
   };
 
@@ -390,6 +443,7 @@ export async function runPipeline(
   const passArgs = {
     limit,
     isAborted: () => isAborted,
+    acceptResults: () => acceptResults,
     tokenPool,
     fetcher,
     config,
@@ -399,34 +453,36 @@ export async function runPipeline(
     onFileDone,
   };
 
-  let pendingItems = Array.from(workMap.values());
+  const pendingItems = Array.from(workMap.values());
   let deferredItems: FileWorkItem[] = [];
 
-  // Handle abort signal for the first pass
-  if (options.signal) {
-    const abortPromise = new Promise<void>((resolve) => {
-      if (options.signal!.aborted) {
-        resolve();
-      } else {
-        options.signal!.addEventListener("abort", () => resolve(), { once: true });
-      }
-    });
+  const runCancellablePass = async (items: FileWorkItem[]): Promise<FileWorkItem[]> => {
+    const passPromise = runPass(items, passArgs);
+    if (!abortPromise) return await passPromise;
 
-    const firstPassPromise = runPass(pendingItems, passArgs);
+    const firstOutcome = await Promise.race([
+      passPromise.then((deferred) => ({ type: "completed" as const, deferred })),
+      abortPromise.then(() => ({ type: "aborted" as const })),
+    ]);
+    if (firstOutcome.type === "completed") return firstOutcome.deferred;
 
-    await Promise.race([
-      firstPassPromise.then((d) => { deferredItems = d; }),
-      abortPromise.then(async () => {
-        isAborted = true;
-        await Promise.race([
-          firstPassPromise,
-          new Promise((r) => setTimeout(r, timeoutMs)),
-        ]);
+    let graceTimer: NodeJS.Timeout | undefined;
+    const graceOutcome = await Promise.race([
+      passPromise.then((deferred) => ({ type: "completed" as const, deferred })),
+      new Promise<{ type: "timeout" }>((resolve) => {
+        graceTimer = setTimeout(() => resolve({ type: "timeout" }), timeoutMs);
       }),
     ]);
-  } else {
-    deferredItems = await runPass(pendingItems, passArgs);
-  }
+    if (graceTimer) clearTimeout(graceTimer);
+    if (graceOutcome.type === "completed") return graceOutcome.deferred;
+
+    acceptResults = false;
+    hardAbortController.abort();
+    unfinishedPass = passPromise;
+    return [];
+  };
+
+  deferredItems = await runCancellablePass(pendingItems);
 
   // Defer-and-revisit loop for deferred GitHub items
   const maxRetries = config.githubRateLimitMaxRetries;
@@ -449,19 +505,25 @@ export async function runPipeline(
     }
     console.log(`[wait] event=github_rate_limit seconds=${Math.ceil(sleepSeconds)} reset=${resetTime}`);
 
-    await sleepFn(sleepSeconds * 1000);
+    if (abortPromise) {
+      await Promise.race([sleepFn(sleepSeconds * 1000), abortPromise]);
+    } else {
+      await sleepFn(sleepSeconds * 1000);
+    }
+    if (isAborted) break;
     tokenPool.resetBlockedState();
 
     retryPass++;
     const deferredBatch = deferredItems;
-    deferredItems = await runPass(deferredBatch, passArgs);
+    deferredItems = await runCancellablePass(deferredBatch);
   }
 
   // Any items still deferred after all retries are marked failed
-  if (deferredItems.length > 0) {
+  if (deferredItems.length > 0 && !isAborted) {
     const errMsg = `GitHub rate limit exceeded after ${maxRetries} retr${maxRetries === 1 ? "y" : "ies"}`;
     for (const workItem of deferredItems) {
       const errResults = produceErrorResultsForWorkItem(workItem, errMsg);
+      onFileDone(errResults);
       for (const res of errResults) {
         processedResultsMap.set(res.findingRef, res);
       }
@@ -485,6 +547,9 @@ export async function runPipeline(
     }
   }
 
+  // Reserve an implicit destination only when the output is ready to be written.
+  outputPath ??= reserveDefaultOutputFilename();
+
   // Write output CSV atomically
   writeResultsCsv(outputPath, finalResults, mergedHeaders);
 
@@ -492,7 +557,14 @@ export async function runPipeline(
   const shouldKeep = options.keepFiles === true || !config.cleanupTempFiles;
   let tempDirKept: string | undefined;
   if (!shouldKeep) {
-    fetcher.cleanup();
+    if (unfinishedPass) {
+      void unfinishedPass.then(
+        () => fetcher.cleanup(),
+        () => fetcher.cleanup()
+      );
+    } else {
+      fetcher.cleanup();
+    }
   } else {
     tempDirKept = fetcher.getTempDir();
   }

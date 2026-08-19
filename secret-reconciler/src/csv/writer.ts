@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { stringify } from "csv-stringify/sync";
 import type { FindingResult } from "../types.js";
 import { mergeHeaders, normalizeHeader } from "./reader.js";
@@ -109,7 +110,7 @@ export function writeResultsCsv(
   });
 
   // Write atomically to avoid corrupted output files on interrupt
-  const tempPath = `${outputPath}.tmp.${process.pid}.${Date.now()}`;
+  const tempPath = `${outputPath}.tmp.${process.pid}.${randomUUID()}`;
   try {
     fs.writeFileSync(tempPath, outputContent, { encoding: "utf-8" });
     fs.renameSync(tempPath, outputPath);

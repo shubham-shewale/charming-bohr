@@ -102,6 +102,7 @@ describe("Pipeline — GitHub Rate-Limit Deferral", () => {
       throw new GitHubRateLimitError(futureReset, 0);
     };
 
+    const progress: Array<{ filesProcessed: number; findingsFailed: number }> = [];
     const summary = await runPipeline([inputFile], {
       config: { ...baseConfig, githubRateLimitMaxRetries: 2 },
       output: outputFile,
@@ -110,11 +111,13 @@ describe("Pipeline — GitHub Rate-Limit Deferral", () => {
       sleepFn: async (ms) => {
         vi.advanceTimersByTime(ms);
       },
+      onProgress: (item) => progress.push(item),
     });
 
     expect(summary.failed).toBe(1);
     expect(summary.completed).toBe(0);
     expect(summary.results[0]?.error).toMatch(/rate limit/i);
+    expect(progress.at(-1)).toMatchObject({ filesProcessed: 1, findingsFailed: 1 });
   });
 
   // ── Slice 3: Azure items complete normally when GitHub is rate-limited ───

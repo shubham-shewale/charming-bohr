@@ -120,6 +120,48 @@ describe("FileFetcher & GitHub Provider", () => {
     expect(fs.existsSync(localPath)).toBe(false);
   });
 
+  it("cleanup preserves pre-existing files in an explicitly shared tempDir", async () => {
+    const cachedPath = getLocalCachePath(testTmpDir, sampleSource);
+    fs.writeFileSync(cachedPath, "owned by another run", "utf-8");
+    const otherSource: CanonicalSource = {
+      ...sampleSource,
+      filePath: "src/other-secret.ts",
+    };
+    const fetcher = new FileFetcher({
+      tokenPool: makePool(),
+      tempDir: testTmpDir,
+      fetchProvider: async () => "created by this run",
+    });
+
+    const ownedPath = await fetcher.fetchFile(otherSource);
+    fetcher.cleanup();
+
+    expect(fs.existsSync(ownedPath)).toBe(false);
+    expect(fs.readFileSync(cachedPath, "utf-8")).toBe("owned by another run");
+  });
+
+  it("does not publish content returned after hard cancellation", async () => {
+    const controller = new AbortController();
+    let releaseFetch!: () => void;
+    const fetcher = new FileFetcher({
+      tokenPool: makePool(),
+      tempDir: testTmpDir,
+      signal: controller.signal,
+      fetchProvider: async () => {
+        await new Promise<void>((resolve) => { releaseFetch = resolve; });
+        return "late content";
+      },
+    });
+
+    const fetchPromise = fetcher.fetchFile(sampleSource);
+    await vi.waitFor(() => expect(releaseFetch).toBeTypeOf("function"));
+    controller.abort();
+    releaseFetch();
+
+    await expect(fetchPromise).rejects.toMatchObject({ name: "AbortError" });
+    expect(fs.existsSync(getLocalCachePath(testTmpDir, sampleSource))).toBe(false);
+  });
+
   // ── GitHub provider — return shape ─────────────────────────────────────────
 
   it("fetchGitHubFile calls GitHub API with correct authorization headers and returns rate-limit fields", async () => {

@@ -9,7 +9,8 @@ import type { CanonicalSource } from "../types.js";
  */
 export async function fetchAzureDevOpsFile(
   source: CanonicalSource,
-  token: string
+  token: string,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!source.project) {
     throw new Error("Missing project in Azure DevOps CanonicalSource");
@@ -27,6 +28,7 @@ export async function fetchAzureDevOpsFile(
       Accept: "text/plain",
       "User-Agent": "secret-reconciler",
     },
+    signal,
   });
 
   if (!response.ok) {

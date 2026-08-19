@@ -31,6 +31,8 @@ export interface AiGatewayRequest {
   /** Forwarded only when the configured gateway/model supports prompt caching. */
   promptCacheKey?: string;
   promptCacheRetention?: "in_memory" | "24h";
+  /** Optional hard-cancellation signal supplied by the pipeline lifecycle. */
+  signal?: AbortSignal;
 }
 
 export interface AiGatewayResponse {

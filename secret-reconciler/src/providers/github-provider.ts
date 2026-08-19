@@ -42,7 +42,8 @@ export interface GitHubFetchResult {
 export async function fetchGitHubFile(
   source: CanonicalSource,
   token: string,
-  tokenIndex: number = 0
+  tokenIndex: number = 0,
+  signal?: AbortSignal
 ): Promise<GitHubFetchResult> {
   const encodedPath = source.filePath
     .split("/")
@@ -58,6 +59,7 @@ export async function fetchGitHubFile(
       Accept: "application/vnd.github.raw",
       "User-Agent": "secret-reconciler",
     },
+    signal,
   });
 
   // Parse rate-limit headers from every response (success or error)

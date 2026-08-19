@@ -229,6 +229,8 @@ secret-reconciler [options] <csv...>
 | `--help` | `-h` | Display help screen and option descriptions. | — |
 | `--version` | `-V` | Output version number. | `0.1.0` |
 
+If another run already reserved the default output name in the same minute, the CLI appends a numeric suffix such as `-1` instead of overwriting it.
+
 The terminal displays a single throttled status line in interactive runs and one status snapshot every 30 seconds in non-interactive runs. Token counts come only from the gateway response. Cached input is displayed only when the gateway returns `usage.prompt_tokens_details.cached_tokens`; otherwise it is shown as `n/a`.
 
 ### Common Usage Examples
@@ -375,11 +377,11 @@ The output CSV preserves **all original input columns** verbatim and appends 20 
 
 ### 1. Graceful Shutdown (`SIGINT` / `SIGTERM`)
 When you press `Ctrl+C`:
-- **Single Press**: The CLI immediately stops dequeuing new files, waits for active in-flight fetch/LLM requests to complete, flushes the current progress to the output CSV with `status=pending` for unfinished rows, and exits cleanly with exit code `130`.
+- **Single Press**: The CLI immediately stops dequeuing new files, gives active in-flight work a short grace period, then cancels it if necessary. Completed work is flushed to the output CSV, unfinished rows remain `status=pending`, and the process exits with code `130`.
 - **Double Press**: Forces immediate process exit.
 
 ### 2. Atomic Writes
-Output files are written using a temporary sibling file (`<output>.tmp.<pid>.<timestamp>`) and atomically renamed to prevent file corruption during sudden terminations.
+Output files are written using a unique temporary sibling file (`<output>.tmp.<pid>.<uuid>`) and atomically renamed to prevent file corruption during sudden terminations.
 
 ### 3. File Size Caps (`MAX_FILE_SIZE_KB`)
 Files exceeding `MAX_FILE_SIZE_KB` (default 500 KB) are automatically marked with `status=skipped` and `error="File size (X KB) exceeds maximum allowed size (Y KB)"` to prevent memory exhaustion and excessive LLM token costs.

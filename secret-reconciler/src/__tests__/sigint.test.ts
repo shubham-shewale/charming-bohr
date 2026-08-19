@@ -160,6 +160,8 @@ rule-slow,https://github.com/my-org/my-repo/blob/${sha}/src/slow.js#L1-L5,medium
     fs.writeFileSync(inputCsvPath, csvContent, "utf-8");
 
     const abortController = new AbortController();
+    const fetchTempDir = path.join(tmpDir, "fetched");
+    const progressReports: Array<{ filesProcessed: number; findingsProcessed: number }> = [];
 
     const mockFetchProvider = async (source: { filePath: string }) => {
       if (source.filePath.includes("fast.js")) {
@@ -168,7 +170,7 @@ rule-slow,https://github.com/my-org/my-repo/blob/${sha}/src/slow.js#L1-L5,medium
       if (source.filePath.includes("slow.js")) {
         // Abort right when slow starts, and sleep longer than sigintTimeoutMs
         abortController.abort();
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         return "slow content";
       }
       return "";
@@ -185,7 +187,9 @@ rule-slow,https://github.com/my-org/my-repo/blob/${sha}/src/slow.js#L1-L5,medium
       fetchProvider: mockFetchProvider,
       trufflehogExecFn: mockTruffleHogExec,
       signal: abortController.signal,
-      sigintTimeoutMs: 100, // Short timeout (100ms) while fetch takes 800ms
+      sigintTimeoutMs: 20,
+      tempDir: fetchTempDir,
+      onProgress: (progress) => progressReports.push(progress),
     });
 
     expect(summary.interrupted).toBe(true);
@@ -202,5 +206,12 @@ rule-slow,https://github.com/my-org/my-repo/blob/${sha}/src/slow.js#L1-L5,medium
     // The slow file was in flight but exceeded timeout -> status=pending
     expect(rows[1]["Rule ID"]).toBe("rule-slow");
     expect(rows[1]["status"]).toBe("pending");
+
+    const progressCountAtReturn = progressReports.length;
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(progressReports).toHaveLength(progressCountAtReturn);
+    expect(summary.results[1]?.status).toBe("pending");
+    expect(fs.existsSync(fetchTempDir)).toBe(true);
+    expect(fs.readdirSync(fetchTempDir)).toHaveLength(0);
   });
 });

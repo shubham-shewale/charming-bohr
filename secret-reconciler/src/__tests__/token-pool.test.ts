@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { TokenPool } from "../providers/token-pool.js";
+import { TokenPool, TokenPoolExhaustedError } from "../providers/token-pool.js";
 
 describe("TokenPool", () => {
   // ── Round-robin ────────────────────────────────────────────────────────────
@@ -17,6 +17,17 @@ describe("TokenPool", () => {
     expect(pool.getToken()).toBe("tok-b");
     expect(pool.getToken()).toBe("tok-c");
     expect(pool.getToken()).toBe("tok-a"); // wraps around
+  });
+
+  it("skips an exhausted token while another token still has quota", () => {
+    const reset = Math.floor(Date.now() / 1000) + 3600;
+    const pool = new TokenPool(["tok-a", "tok-b"]);
+    pool.reportUsage("tok-a", 0, reset);
+    pool.reportUsage("tok-b", 2, reset);
+
+    expect(pool.getToken()).toBe("tok-b");
+    expect(pool.getToken()).toBe("tok-b");
+    expect(() => pool.getToken()).toThrow(TokenPoolExhaustedError);
   });
 
   // ── isBlocked ──────────────────────────────────────────────────────────────
@@ -104,5 +115,26 @@ describe("TokenPool", () => {
     const pool = new TokenPool(["tok-a"]);
     expect(() => pool.reportUsage("unknown-token", 0, 9999999)).not.toThrow();
     expect(pool.isBlocked).toBe(false); // tok-a unaffected
+  });
+
+  it("does not let an out-of-order response increase remaining quota", () => {
+    const reset = Math.floor(Date.now() / 1000) + 3600;
+    const pool = new TokenPool(["tok-a"]);
+
+    pool.reportUsage("tok-a", 0, reset);
+    pool.reportUsage("tok-a", 25, reset);
+
+    expect(pool.isBlocked).toBe(true);
+    expect(() => pool.getToken()).toThrow(TokenPoolExhaustedError);
+  });
+
+  it("ignores usage reported for an older reset window", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const pool = new TokenPool(["tok-a"]);
+
+    pool.reportUsage("tok-a", 0, now + 7200);
+    pool.reportUsage("tok-a", 100, now + 3600);
+
+    expect(pool.isBlocked).toBe(true);
   });
 });

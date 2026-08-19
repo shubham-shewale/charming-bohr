@@ -95,7 +95,16 @@ export class OpenAiCompatibleGatewayClient implements AiGatewayClientLike {
 
   async complete(request: AiGatewayRequest): Promise<AiGatewayResponse> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let externallyAborted = false;
+    const abortFromCaller = () => {
+      externallyAborted = true;
+      controller.abort(request.signal?.reason);
+    };
+    if (request.signal?.aborted) abortFromCaller();
+    else request.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, this.timeoutMs);
 
     try {
       const response = await this.fetchFn(`${this.baseUrl}/v1/chat/completions`, {
@@ -155,11 +164,15 @@ export class OpenAiCompatibleGatewayClient implements AiGatewayClientLike {
       };
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") {
+        if (externallyAborted) {
+          throw new Error("AI Gateway request aborted");
+        }
         throw new Error(`AI Gateway request timed out after ${this.timeoutMs}ms`);
       }
       throw error;
     } finally {
       clearTimeout(timeout);
+      request.signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 }

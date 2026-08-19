@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { generateDefaultOutputFilename, runPipeline, type PipelineProgress } from "../pipeline.js";
+import {
+  generateDefaultOutputFilename,
+  reserveDefaultOutputFilename,
+  runPipeline,
+  type PipelineProgress,
+} from "../pipeline.js";
 import type { AppConfig } from "../config.js";
 
 describe("Polish: Progress, Filename & Cleanup Tests", () => {
@@ -41,6 +46,15 @@ describe("Polish: Progress, Filename & Cleanup Tests", () => {
     expect(generated).toBe(path.join("/test/dir", "results-20260817T1430.csv"));
   });
 
+  it("reserves distinct default output paths for concurrent runs", () => {
+    const fixedDate = new Date(2026, 7, 17, 14, 30);
+    const first = reserveDefaultOutputFilename(tmpDir, fixedDate);
+    const second = reserveDefaultOutputFilename(tmpDir, fixedDate);
+
+    expect(first).toBe(path.join(tmpDir, "results-20260817T1430.csv"));
+    expect(second).toBe(path.join(tmpDir, "results-20260817T1430-1.csv"));
+  });
+
   it("auto-generates output filename when options.output is not specified", async () => {
     const inputCsvPath = path.join(tmpDir, "findings.csv");
     const sha = "1234567890abcdef1234567890abcdef12345678";
@@ -55,7 +69,7 @@ rule-test,https://github.com/my-org/my-repo/blob/${sha}/src/test.js#L1-L5,high
       trufflehogExecFn: async () => ({ stdout: "", stderr: "" }),
     });
 
-    expect(summary.outputPath).toMatch(/results-\d{8}T\d{4}\.csv$/);
+    expect(summary.outputPath).toMatch(/results-\d{8}T\d{4}(?:-\d+)?\.csv$/);
     expect(fs.existsSync(summary.outputPath)).toBe(true);
 
     // Cleanup generated file in cwd
@@ -125,6 +139,28 @@ rule-2,https://github.com/my-org/my-repo/blob/${sha}/src/file2.js#L1-L5,medium
     expect(lastProgress.totalFindings).toBe(2);
     expect(lastProgress.tokensUsed).toBe(400); // 2 files * (150 in + 50 out)
     expect(lastProgress.estimatedCostUsd).toBeGreaterThan(0);
+  });
+
+  it("does not let a throwing progress callback change pipeline results", async () => {
+    const inputCsvPath = path.join(tmpDir, "throwing-progress.csv");
+    const outputCsvPath = path.join(tmpDir, "throwing-progress-results.csv");
+    const sha = "1234567890abcdef1234567890abcdef12345678";
+    fs.writeFileSync(
+      inputCsvPath,
+      `Rule ID,SCM Link\nrule-1,https://github.com/my-org/my-repo/blob/${sha}/src/file.js#L1-L2\n`,
+      "utf-8"
+    );
+
+    const summary = await runPipeline([inputCsvPath], {
+      config: baseConfig,
+      output: outputCsvPath,
+      fetchProvider: async () => "content",
+      trufflehogExecFn: async () => ({ stdout: "", stderr: "" }),
+      onProgress: () => { throw new Error("dashboard unavailable"); },
+    });
+
+    expect(summary.completed).toBe(1);
+    expect(summary.failed).toBe(0);
   });
 
   it("preserves temp files and populates tempDirKept when keepFiles=true", async () => {

@@ -10,7 +10,7 @@ export const SUPPORTED_TRUFFLEHOG_VERSION = "3.97.0";
 export type TruffleHogExecutor = (
   command: string,
   args: string[],
-  options: { timeout?: number }
+  options: { timeout?: number; signal?: AbortSignal }
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export interface RunTruffleHogOptions {
@@ -18,6 +18,8 @@ export interface RunTruffleHogOptions {
   userAgentSuffix?: string;
   configPath?: string;
   timeoutMs?: number;
+  /** Hard-cancellation signal supplied by the pipeline lifecycle. */
+  signal?: AbortSignal;
   /** Custom executor override for testing. */
   execFn?: TruffleHogExecutor;
 }
@@ -27,7 +29,7 @@ export interface RunTruffleHogOptions {
  * implemented by this adapter. Call once during application startup.
  */
 export async function assertSupportedTruffleHogVersion(
-  options: Pick<RunTruffleHogOptions, "execFn" | "timeoutMs"> = {}
+  options: Pick<RunTruffleHogOptions, "execFn" | "timeoutMs" | "signal"> = {}
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 10000;
   const executor = options.execFn ?? (async (cmd, args, opts) => {
@@ -36,7 +38,10 @@ export async function assertSupportedTruffleHogVersion(
 
   let stdout: string;
   try {
-    const result = await executor("trufflehog", ["--version"], { timeout: timeoutMs });
+    const result = await executor("trufflehog", ["--version"], {
+      timeout: timeoutMs,
+      signal: options.signal,
+    });
     stdout = result.stdout.trim();
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -92,6 +97,7 @@ export async function runTruffleHog(
   try {
     const res = await executor("trufflehog", args, {
       timeout: timeoutMs,
+      signal: options.signal,
     });
     stdout = res.stdout;
   } catch (err: unknown) {
