@@ -158,4 +158,8 @@ Thumbs.db
 .scratch/
 skills-lock.json
 
+# Local patch files
+*.patch
+
+
 
